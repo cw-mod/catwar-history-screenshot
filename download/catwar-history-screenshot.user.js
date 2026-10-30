@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      7.1
+// @version      7.2
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся (на скрине в заголовке остаются только «История» и бейдж часов), в <h2> рядом с заголовком вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). Все современные CSS color-функции санируются, элементы multi-find-* принудительно делаются inline, чтобы html2canvas не мазал подсветку по строке.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -220,25 +220,56 @@
     // =========================================================================
 
     // Multi-Find оборачивает найденные слова в custom element
-    // <multi-find-1-extension>. По умолчанию custom elements имеют display:inline,
-    // но html2canvas не знает про это и рендерит их как block — подсветка
-    // растягивается на всю строку («смазывается»).
-    // Решение: перед снимком принудительно ставим display:inline !important
-    // через inline-стиль. После снимка — восстанавливаем.
+    // <multi-find-1-extension>. html2canvas не понимает custom elements и
+    // рендерит их как block — подсветка растягивается на всю строку
+    // («смазывается»). Инлайн-стиль display:inline не помогает.
+    //
+    // Решение: перед снимком заменяем каждый <multi-find-1-extension> на
+    // обычный <span> с теми же background-color/color (берём из computed
+    // style), принудительным display:inline. Классы HL-* не копируем —
+    // они могут нести display:block в CSS расширения. После снимка —
+    // возвращаем оригинальные custom elements на место.
     function fixMultiFindDisplay(rootEl) {
         const targets = Array.from(rootEl.querySelectorAll('multi-find-1-extension'));
-        const saved = targets.map(el => {
-            const prevDisplay = el.style.display;
-            const prevPriority = el.style.getPropertyPriority('display');
-            el.style.setProperty('display', 'inline', 'important');
-            return { el, prevDisplay, prevPriority };
+        const replacements = [];
+
+        targets.forEach(original => {
+            // Берём вычисленные стили подсветки
+            let bg = '';
+            let col = '';
+            try {
+                const cs = getComputedStyle(original);
+                bg = cs.backgroundColor || '';
+                col = cs.color || '';
+            } catch (e) {}
+
+            const span = document.createElement('span');
+            // Только нужное: фон, цвет текста, display:inline. Без классов.
+            span.style.cssText =
+                `background-color: ${bg || 'transparent'}; ` +
+                `color: ${col || 'inherit'}; ` +
+                `display: inline !important;`;
+
+            // Переносим всё содержимое оригинала в span
+            while (original.firstChild) {
+                span.appendChild(original.firstChild);
+            }
+
+            // Заменяем в DOM
+            if (original.parentNode) {
+                original.parentNode.replaceChild(span, original);
+            }
+            replacements.push({ span, original });
         });
+
         return function restore() {
-            saved.forEach(({ el, prevDisplay, prevPriority }) => {
-                if (prevDisplay) {
-                    el.style.setProperty('display', prevDisplay, prevPriority);
-                } else {
-                    el.style.removeProperty('display');
+            replacements.forEach(({ span, original }) => {
+                if (span.parentNode) {
+                    // Возвращаем содержимое в original
+                    while (span.firstChild) {
+                        original.appendChild(span.firstChild);
+                    }
+                    span.parentNode.replaceChild(original, span);
                 }
             });
         };
