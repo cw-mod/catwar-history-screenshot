@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      6.0
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history (с заголовком «История», кнопками и блоком). Перед снимком в заголовок рядом с кнопками временно вставляется «бейдж» с часами UwU-стиля: «🌍 02:05:44 31.10.26 MSK» по МСК.
+// @version      7.0
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся (на скрине в заголовке остаются только «История» и бейдж часов), в <h2> рядом с заголовком вставляется бейдж «🌍 02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки). Все современные CSS color-функции (color()/oklch()/oklab()/lab()/lch()/hwb()) санируются перед захватом, чтобы html2canvas не падал.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -21,6 +21,10 @@
     const GROUP_ID = 'cw-history-screenshot-group';
     const GROUP_ID_FLAT = 'cw-history-screenshot-group-flat';
     const CLOCK_STAMP_ID = 'cw-history-clock-stamp';
+
+    // Цвет бейджа часов (по запросу пользователя)
+    const CLOCK_BG = 'rgb(184, 170, 170)';
+    const CLOCK_TEXT = '#000000';
 
     // =========================================================================
     //  Время по МСК (UTC+3)
@@ -47,20 +51,15 @@
     }
 
     // =========================================================================
-    //  Стиль кнопок
+    //  Стиль кнопок (без color-mix — html2canvas его не парсит)
     // =========================================================================
 
     function styleButton(btn, variant) {
         const isPrimary = variant === 'primary';
-        const baseBg = isPrimary
-            ? 'var(--ds-primary, #d0b690)'
-            : 'color-mix(in srgb, var(--ds-info-rgb, 255,255,255) 0.45, transparent)';
-        const baseColor = isPrimary
-            ? 'var(--ds-on-accent, #ffffff)'
-            : 'var(--ds-page-text, #09060D)';
-        const hoverBg = isPrimary
-            ? 'color-mix(in srgb, var(--ds-primary, #d0b690) 86%, black)'
-            : 'color-mix(in srgb, var(--ds-info-rgb, 255,255,255) 0.7, transparent)';
+        // Обычные hex/rgba, никаких color-mix() или var() с color-mix внутри
+        const baseBg = isPrimary ? '#d0b690' : 'rgba(255, 255, 255, 0.45)';
+        const baseColor = isPrimary ? '#ffffff' : '#09060D';
+        const hoverBg = isPrimary ? '#b89c70' : 'rgba(255, 255, 255, 0.7)';
 
         btn.style.cssText = [
             'margin-left: 6px',
@@ -71,7 +70,7 @@
             'cursor: pointer',
             'background: ' + baseBg,
             'color: ' + baseColor,
-            'border: 1px solid var(--ui-line, rgba(0,0,0,0.16))',
+            'border: 1px solid rgba(0, 0, 0, 0.16)',
             'border-radius: 6px',
             'vertical-align: middle',
             'user-select: none',
@@ -97,11 +96,9 @@
     }
 
     // =========================================================================
-    //  Бейдж часов (вставляется в <h2> рядом с кнопками на время снимка)
+    //  Бейдж часов (rgb(184, 170, 170), без рамки)
     // =========================================================================
 
-    // Стилизован как маленький «бейдж» в духе часов UwU: скруглённый,
-    // подложка info-блока игры, тёмный текст, тонкая рамка.
     function createClockStamp() {
         const msk = getMoscowDate();
         const timeStr = `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
@@ -117,9 +114,8 @@
             'font-size: 0.9em',
             'font-weight: 600',
             'line-height: 1.4',
-            'background: color-mix(in srgb, var(--ds-info-rgb, 255,255,255) 0.6, transparent)',
-            'color: var(--ds-page-text, #09060D)',
-            'border: 1px solid var(--ui-line, rgba(0,0,0,0.18))',
+            'background: ' + CLOCK_BG,
+            'color: ' + CLOCK_TEXT,
             'border-radius: 10px',
             'vertical-align: middle',
             'white-space: nowrap',
@@ -130,11 +126,8 @@
     }
 
     function insertClockStamp(target) {
-        // Находим заголовок <h2> внутри td#history — туда уже вставлены кнопки
-        // скриншота. Кладём бейдж часов рядом (в конец <h2>).
         const h2 = target.querySelector('h2');
         if (!h2) return null;
-        // На всякий случай — удаляем предыдущий, если вдруг остался
         const prev = h2.querySelector('#' + CLOCK_STAMP_ID);
         if (prev) prev.remove();
         const stamp = createClockStamp();
@@ -146,8 +139,80 @@
         if (stamp && stamp.parentNode) {
             stamp.parentNode.removeChild(stamp);
         }
-        // Подстраховка — убираем все такие элементы на странице
         document.querySelectorAll('#' + CLOCK_STAMP_ID).forEach(el => el.remove());
+    }
+
+    // =========================================================================
+    //  Санирование современных CSS color-функций
+    // =========================================================================
+
+    // html2canvas не умеет парсить color(), oklch(), oklab(), lab(), lch(), hwb().
+    // Пробегаем по всем элементам внутри td#history, и если в computed style
+    // какого-то цветового свойства есть такая функция — подменяем inline-стилем
+    // на безопасный цвет. После захвата — восстанавливаем.
+    const UNSUPPORTED_COLOR_FUNCS = ['color(', 'oklch(', 'oklab(', 'lab(', 'lch(', 'hwb('];
+
+    const COLOR_PROPS_KEBAB = [
+        'background-color',
+        'color',
+        'border-top-color',
+        'border-right-color',
+        'border-bottom-color',
+        'border-left-color',
+        'border-color',
+        'outline-color',
+        'text-decoration-color',
+        'fill',
+        'stroke',
+        'box-shadow',
+        'caret-color'
+    ];
+
+    function sanitizeColorFunctions(rootEl) {
+        const saved = [];
+        const elements = [rootEl, ...rootEl.querySelectorAll('*')];
+
+        elements.forEach(el => {
+            let cs;
+            try { cs = getComputedStyle(el); } catch (e) { return; }
+
+            COLOR_PROPS_KEBAB.forEach(prop => {
+                let val;
+                try { val = cs.getPropertyValue(prop); } catch (e) { return; }
+                if (!val) return;
+                const lower = val.toLowerCase();
+                if (!UNSUPPORTED_COLOR_FUNCS.some(p => lower.includes(p))) return;
+
+                // Запоминаем предыдущее inline-значение, чтобы восстановить
+                const prevVal = el.style.getPropertyValue(prop);
+                const prevPriority = el.style.getPropertyPriority(prop);
+                saved.push({ el, prop, prevVal, prevPriority });
+
+                // Подбираем безопасную замену
+                let safe;
+                if (prop === 'background-color') {
+                    safe = 'rgba(184, 170, 170, 0.55)';
+                } else if (prop === 'box-shadow') {
+                    safe = 'none';
+                } else if (prop === 'fill' || prop === 'stroke') {
+                    safe = CLOCK_BG;
+                } else {
+                    safe = CLOCK_BG;
+                }
+                el.style.setProperty(prop, safe, 'important');
+            });
+        });
+
+        // Возвращаем функцию отката
+        return function restore() {
+            saved.forEach(({ el, prop, prevVal, prevPriority }) => {
+                if (prevVal) {
+                    el.style.setProperty(prop, prevVal, prevPriority);
+                } else {
+                    el.style.removeProperty(prop);
+                }
+            });
+        };
     }
 
     // =========================================================================
@@ -182,8 +247,6 @@
     // =========================================================================
 
     function takeScreenshot(btn, mode) {
-        // Захватываем ВЕСЬ td#history — включая <h2> (заголовок «История»,
-        // кнопки 📲/👁 и наш бейдж часов) и сам #history_block с текстом.
         const target =
             document.querySelector('td#history') ||
             document.querySelector('#history');
@@ -205,15 +268,21 @@
 
         const scale = Math.min(window.devicePixelRatio || 1.5, 2);
 
-        // 1. Внедряем бейдж часов в заголовок рядом с кнопками
+        // 1. Прячем группу кнопок 📲/👁 — на скрине в заголовке будут только
+        //    «История» и бейдж часов.
+        const group = document.getElementById(GROUP_ID) ||
+                      document.getElementById(GROUP_ID_FLAT);
+        const savedGroupDisplay = group ? group.style.display : null;
+        if (group) group.style.display = 'none';
+
+        // 2. Внедряем бейдж часов в <h2>
         const clockStamp = insertClockStamp(target);
 
-        // 2. Для «full» — раскрываем #history_block, чтобы захватить весь
-        // контент, а не только видимую часть окошка.
+        // 3. Для «full» — раскрываем #history_block
         const historyBlock = target.querySelector('#history_block');
-        let savedStyles = null;
+        let savedBlockStyles = null;
         if (mode === 'full' && historyBlock) {
-            savedStyles = {
+            savedBlockStyles = {
                 height: historyBlock.style.height,
                 maxHeight: historyBlock.style.maxHeight,
                 overflow: historyBlock.style.overflow,
@@ -227,10 +296,13 @@
             historyBlock.style.overflowY = 'visible';
             historyBlock.style.overflowX = 'visible';
             historyBlock.style.resize = 'none';
-            void historyBlock.offsetHeight; // force reflow
+            void historyBlock.offsetHeight;
         }
 
-        // 3. Размеры для html2canvas
+        // 4. Санируем color()/oklch()/etc в computed styles внутри td#history
+        const restoreColors = sanitizeColorFunctions(target);
+
+        // 5. Замеряем размеры
         const captureWidth = target.scrollWidth || target.offsetWidth;
         const captureHeight = mode === 'full'
             ? target.offsetHeight
@@ -250,15 +322,21 @@
         };
 
         function cleanup() {
-            removeClockStamp(clockStamp);
-            if (savedStyles && historyBlock) {
-                historyBlock.style.height = savedStyles.height;
-                historyBlock.style.maxHeight = savedStyles.maxHeight;
-                historyBlock.style.overflow = savedStyles.overflow;
-                historyBlock.style.overflowY = savedStyles.overflowY;
-                historyBlock.style.overflowX = savedStyles.overflowX;
-                historyBlock.style.resize = savedStyles.resize;
+            // 1. Восстанавливаем color-функции
+            try { restoreColors(); } catch (e) {}
+            // 2. Восстанавливаем #history_block
+            if (savedBlockStyles && historyBlock) {
+                historyBlock.style.height = savedBlockStyles.height;
+                historyBlock.style.maxHeight = savedBlockStyles.maxHeight;
+                historyBlock.style.overflow = savedBlockStyles.overflow;
+                historyBlock.style.overflowY = savedBlockStyles.overflowY;
+                historyBlock.style.overflowX = savedBlockStyles.overflowX;
+                historyBlock.style.resize = savedBlockStyles.resize;
             }
+            // 3. Удаляем бейдж часов
+            removeClockStamp(clockStamp);
+            // 4. Восстанавливаем видимость группы кнопок
+            if (group) group.style.display = savedGroupDisplay;
         }
 
         function finalize(rawCanvas) {
@@ -303,14 +381,14 @@
         const btnFull = document.createElement('button');
         btnFull.type = 'button';
         btnFull.textContent = '📸 Вся история';
-        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (с заголовком и кнопками). Рядом с кнопками на скрине будет бейдж с временем и датой по МСК.';
+        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «🌍 время дата MSK» по МСК.';
         styleButton(btnFull, 'primary');
         btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
 
         const btnVisible = document.createElement('button');
         btnVisible.type = 'button';
         btnVisible.textContent = '👁 Видимое';
-        btnVisible.title = 'Сохранить скриншот только видимой части истории (с заголовком и кнопками). Рядом с кнопками на скрине будет бейдж с временем и датой по МСК.';
+        btnVisible.title = 'Сохранить скриншот только видимой части истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «🌍 время дата MSK» по МСК.';
         styleButton(btnVisible, 'secondary');
         btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
 
@@ -331,7 +409,6 @@
             }
         }
 
-        // Запасной вариант: если нет td#history, кнопки в самый верх блока #history_block
         const historyBlock = document.querySelector('#history_block');
         if (historyBlock && !historyBlock.querySelector('#' + GROUP_ID_FLAT)) {
             const wrapper = document.createElement('div');
