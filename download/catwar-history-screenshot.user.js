@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      2.0
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. На скриншот накладывается штамп с датой и временем по МСК. Имя файла тоже содержит МСК-штамп.
+// @version      3.0
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. На скриншот накладывается штамп с временем и датой по МСК в стиле часов UwU (Arial, время крупно + «МСК» + дата снизу), подложка штампа — цвет самого блока из игры.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -22,7 +22,7 @@
     const GROUP_ID_FLAT = 'cw-history-screenshot-group-flat';
 
     // =========================================================================
-    //  Утилиты времени (МСК = UTC+3)
+    //  Время по МСК (UTC+3)
     // =========================================================================
 
     function getMoscowDate() {
@@ -33,20 +33,6 @@
 
     function pad(n) {
         return String(n).padStart(2, '0');
-    }
-
-    // "31.10.2026 01:20:29" — для штампа на картинке
-    function moscowStampPretty() {
-        const msk = getMoscowDate();
-        return `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${msk.getFullYear()} ` +
-               `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
-    }
-
-    // "31.10.2026_01-20-29" — для имени файла (без двоеточий)
-    function moscowStampFile() {
-        const msk = getMoscowDate();
-        return `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${msk.getFullYear()}_` +
-               `${pad(msk.getHours())}-${pad(msk.getMinutes())}-${pad(msk.getSeconds())}`;
     }
 
     function waitForElement(selector, callback, maxAttempts = 100) {
@@ -60,11 +46,40 @@
     }
 
     // =========================================================================
+    //  Цвет подложки из игры
+    // =========================================================================
+
+    // Берём вычисленный background-color #history_block и композируем его поверх
+    // белого (html2canvas использует #ffffff как backgroundColor), чтобы получить
+    // непрозрачный rgb-цвет, который можно заливать на canvas.
+    function getGameSubstrateColor() {
+        const el = document.querySelector('#history_block') ||
+                   document.querySelector('td#history') ||
+                   document.body;
+        try {
+            const cs = getComputedStyle(el);
+            const bg = cs.backgroundColor; // напр. "rgba(159, 147, 147, 0.55)"
+            const m = bg.match(/rgba?\(([^)]+)\)/i);
+            if (m) {
+                const parts = m[1].split(',').map(s => parseFloat(s.trim()));
+                const r = parts[0] | 0, g = parts[1] | 0, b = parts[2] | 0;
+                const a = parts.length > 3 ? parts[3] : 1;
+                const cr = Math.round(r * a + 255 * (1 - a));
+                const cg = Math.round(g * a + 255 * (1 - a));
+                const cb = Math.round(b * a + 255 * (1 - a));
+                return `rgb(${cr}, ${cg}, ${cb})`;
+            }
+            return bg || '#b8aaaa';
+        } catch (e) {
+            return '#b8aaaa';
+        }
+    }
+
+    // =========================================================================
     //  Стиль кнопок
     // =========================================================================
 
     function styleButton(btn, variant) {
-        // variant: 'primary' (вся история) | 'secondary' (видимое)
         const isPrimary = variant === 'primary';
         const baseBg = isPrimary
             ? 'var(--ds-primary, #d0b690)'
@@ -111,44 +126,84 @@
     }
 
     // =========================================================================
-    //  Пост-обработка canvas: штамп + обрезка до видимого
+    //  Штамп на картинке: стиль часов UwU
     // =========================================================================
 
-    // Добавляет снизу тёмную полосу с текстом "CatWar • История • DD.MM.YYYY HH:MM:SS МСК"
-    function addTimestampBar(srcCanvas, modeLabel) {
-        const scale = Math.max(1, srcCanvas.width / Math.max(1, srcCanvas._cwCssWidth || srcCanvas.width / 2));
-        const barHeight = Math.max(34, Math.round(34 * scale));
-        const padX = Math.round(14 * scale);
+    // Рисует снизу canvas полосу подложкой из игры и кладёт на неё время/МСК/дату
+    // шрифтом Arial (время крупно, МСК рядом, дата снизу) — как часы UwU.
+    function addTimestampBar(srcCanvas) {
+        const cssWidth = srcCanvas._cwCssWidth || (srcCanvas.width / 2);
+        const scale = srcCanvas.width / Math.max(1, cssWidth);
+
+        const barHeightCss = 72;
+        const barHeight = Math.max(50, Math.round(barHeightCss * scale));
+        const sidePadCss = 14;
+        const sidePad = Math.round(sidePadCss * scale);
 
         const out = document.createElement('canvas');
         out.width = srcCanvas.width;
         out.height = srcCanvas.height + barHeight;
         const ctx = out.getContext('2d');
 
-        // Фон полосы
-        ctx.fillStyle = '#1a1419';
+        // 1. Подложка из игры
+        const substrate = getGameSubstrateColor();
+        ctx.fillStyle = substrate;
         ctx.fillRect(0, srcCanvas.height, out.width, barHeight);
 
-        // Тонкая разделительная полоска сверху
-        ctx.fillStyle = '#b388ff';
-        ctx.fillRect(0, srcCanvas.height, out.width, Math.max(1, Math.round(2 * scale)));
+        // 2. Тонкая разделительная полоска сверху (по мотивам border у часов UwU,
+        //    но адаптирована под светлую подложку)
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.14)';
+        ctx.fillRect(0, srcCanvas.height, out.width, Math.max(1, Math.round(1 * scale)));
 
-        // Исходная картинка
+        // 3. Исходный скриншот
         ctx.drawImage(srcCanvas, 0, 0);
 
-        // Текст
-        const fontSize = Math.max(13, Math.round(15 * scale));
-        ctx.font = `600 ${fontSize}px Arial, "Segoe UI", sans-serif`;
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#ffffff';
+        // 4. Контент: время + МСК + дата, шрифт Arial (как у часов UwU)
+        const msk = getMoscowDate();
+        const timeStr = `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
+        const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${msk.getFullYear()}`;
 
-        const stampText = `CatWar • История • ${modeLabel} • ${moscowStampPretty()} МСК`;
-        ctx.fillText(stampText, padX, srcCanvas.height + barHeight / 2);
+        // У часов UwU: time=2em (от base 14px => 28px), date=1.2em (~17px), icon/label — base
+        const timeFontSize = Math.max(20, Math.round(28 * scale));
+        const dateFontSize = Math.max(13, Math.round(17 * scale));
+        const labelFontSize = Math.max(11, Math.round(13 * scale));
+        const gap = Math.round(6 * scale);
+
+        ctx.font = `bold ${timeFontSize}px Arial, "Segoe UI", sans-serif`;
+        const timeW = ctx.measureText(timeStr).width;
+        ctx.font = `${labelFontSize}px Arial, "Segoe UI", sans-serif`;
+        const labelW = ctx.measureText('МСК').width;
+        ctx.font = `${dateFontSize}px Arial, "Segoe UI", sans-serif`;
+        const dateW = ctx.measureText(dateStr).width;
+
+        const topRowW = timeW + gap + labelW;
+        const contentW = Math.max(topRowW, dateW);
+        const contentH = timeFontSize + dateFontSize + gap;
+
+        // Прижимаем вправо
+        const contentX = out.width - sidePad - contentW;
+        const contentY = srcCanvas.height + Math.round((barHeight - contentH) / 2);
+
+        ctx.fillStyle = '#000000'; // цвет текста как у часов UwU
+        ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
+
+        // Время (крупно)
+        ctx.font = `bold ${timeFontSize}px Arial, "Segoe UI", sans-serif`;
+        ctx.fillText(timeStr, contentX, contentY);
+
+        // МСК (рядом со временем, выравнен по центру строки времени)
+        ctx.font = `${labelFontSize}px Arial, "Segoe UI", sans-serif`;
+        ctx.fillText('МСК', contentX + timeW + gap, contentY + Math.round((timeFontSize - labelFontSize) / 2));
+
+        // Дата (снизу)
+        ctx.font = `${dateFontSize}px Arial, "Segoe UI", sans-serif`;
+        ctx.fillText(dateStr, contentX, contentY + timeFontSize + gap);
 
         return out;
     }
 
-    // Обрезает canvas до видимой части #history_block (по scrollTop / clientHeight).
+    // Обрезает полный canvas до видимой части #history_block
     function cropToVisible(srcCanvas, target, scale) {
         const cssW = target.clientWidth;
         const cssH = target.clientHeight;
@@ -159,13 +214,12 @@
         out.height = Math.max(1, Math.round(cssH * scale));
         const ctx = out.getContext('2d');
 
-        // Тянем из полного canvas только видимую вертикальную полосу
-        const srcY = Math.round(scrollTop * scale);
+        const srcY = Math.max(0, Math.round(scrollTop * scale));
         const srcH = Math.round(cssH * scale);
         ctx.drawImage(
             srcCanvas,
-            0, srcY, srcCanvas.width, srcH,   // source
-            0, 0, out.width, out.height       // dest
+            0, srcY, srcCanvas.width, srcH,
+            0, 0, out.width, out.height
         );
         return out;
     }
@@ -175,8 +229,12 @@
     // =========================================================================
 
     function downloadCanvas(canvas, modeSlug) {
-        const stamp = moscowStampFile();
-        const filename = `история_catwar_${modeSlug}_${stamp}_МСК.png`;
+        const msk = getMoscowDate();
+        const stamp =
+            `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${msk.getFullYear()}_` +
+            `${pad(msk.getHours())}-${pad(msk.getMinutes())}-${pad(msk.getSeconds())}`;
+        const filename = `история_${modeSlug}_${stamp}_МСК.png`;
+
         canvas.toBlob(function (blob) {
             if (!blob) {
                 alert('Не удалось собрать PNG (canvas пустой).');
@@ -197,7 +255,6 @@
     //  Захват
     // =========================================================================
 
-    // mode: 'full' (вся история) | 'visible' (только видимое в окошке)
     function takeScreenshot(btn, mode) {
         const target =
             document.querySelector('#history_block') ||
@@ -221,29 +278,68 @@
 
         const scale = Math.min(window.devicePixelRatio || 1.5, 2);
 
+        // Для «full» — временно раскрываем блок, чтобы html2canvas захватил
+        // ВЕСЬ контент, а не только видимую часть окошка.
+        let savedStyles = null;
+        if (mode === 'full') {
+            savedStyles = {
+                height: target.style.height,
+                maxHeight: target.style.maxHeight,
+                overflow: target.style.overflow,
+                overflowY: target.style.overflowY,
+                overflowX: target.style.overflowX,
+                resize: target.style.resize
+            };
+            target.style.height = 'auto';
+            target.style.maxHeight = 'none';
+            target.style.overflow = 'visible';
+            target.style.overflowY = 'visible';
+            target.style.overflowX = 'visible';
+            target.style.resize = 'none';
+            // force reflow, чтобы html2canvas увидел новые размеры
+            void target.offsetHeight;
+        }
+
+        const captureWidth = target.scrollWidth || target.offsetWidth;
+        const captureHeight = mode === 'full'
+            ? target.offsetHeight
+            : target.clientHeight;
+
         const baseOptions = {
             backgroundColor: '#ffffff',
             scale: scale,
             useCORS: true,
             allowTaint: true,
             logging: false,
+            width: captureWidth,
+            height: captureHeight,
             scrollX: 0,
             scrollY: 0,
             windowWidth: document.documentElement.clientWidth
         };
 
-        function finalize(rawCanvas) {
-            // Запоминаем css-ширину, чтобы корректно посчитать масштаб полосы.
-            rawCanvas._cwCssWidth = target.clientWidth;
+        function restoreStyles() {
+            if (!savedStyles) return;
+            target.style.height = savedStyles.height;
+            target.style.maxHeight = savedStyles.maxHeight;
+            target.style.overflow = savedStyles.overflow;
+            target.style.overflowY = savedStyles.overflowY;
+            target.style.overflowX = savedStyles.overflowX;
+            target.style.resize = savedStyles.resize;
+        }
 
+        function finalize(rawCanvas) {
+            restoreStyles();
+
+            rawCanvas._cwCssWidth = captureWidth;
             let processed;
             if (mode === 'visible') {
                 const cropped = cropToVisible(rawCanvas, target, scale);
-                processed = addTimestampBar(cropped, 'видимое');
+                processed = addTimestampBar(cropped);
             } else {
-                processed = addTimestampBar(rawCanvas, 'вся история');
+                processed = addTimestampBar(rawCanvas);
             }
-            downloadCanvas(processed, mode === 'visible' ? 'видимое' : 'вся-история');
+            downloadCanvas(processed, mode === 'visible' ? 'видимое' : 'полная');
 
             btn.textContent = '✅ Сохранено!';
             setTimeout(() => {
@@ -253,13 +349,13 @@
         }
 
         function fail(err) {
+            restoreStyles();
             console.error('[CatWar Screenshot] Ошибка:', err);
             alert('Не удалось сделать скриншот:\n' + (err && err.message ? err.message : err));
             btn.textContent = originalLabel;
             btn.disabled = originalDisabled;
         }
 
-        // Первая попытка с allowTaint: true. Если упадёт — повтор без allowTaint.
         window.html2canvas(target, baseOptions)
             .then(finalize)
             .catch(function (err1) {
@@ -283,14 +379,14 @@
         const btnFull = document.createElement('button');
         btnFull.type = 'button';
         btnFull.textContent = '📸 Вся история';
-        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (полный захват с прокруткой). На картинке будет штамп с датой и временем по МСК.';
+        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (полный захват). На картинке будет штамп с временем и датой по МСК в стиле часов UwU.';
         styleButton(btnFull, 'primary');
         btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
 
         const btnVisible = document.createElement('button');
         btnVisible.type = 'button';
         btnVisible.textContent = '👁 Видимое';
-        btnVisible.title = 'Сохранить скриншот только видимой части истории (что сейчас в окошке). На картинке будет штамп с датой и временем по МСК.';
+        btnVisible.title = 'Сохранить скриншот только видимой части истории. На картинке будет штамп с временем и датой по МСК в стиле часов UwU.';
         styleButton(btnVisible, 'secondary');
         btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
 
@@ -302,7 +398,6 @@
     function ensureButton() {
         if (document.getElementById(GROUP_ID) || document.getElementById(GROUP_ID_FLAT)) return;
 
-        // 1) Рядом с заголовком «История» внутри td#history.
         const historyTd = document.querySelector('td#history');
         if (historyTd) {
             const h2 = historyTd.querySelector('h2');
@@ -312,7 +407,6 @@
             }
         }
 
-        // 2) Запасной вариант: плоская группа в самом верху блока #history_block.
         const historyBlock = document.querySelector('#history_block');
         if (historyBlock && !historyBlock.querySelector('#' + GROUP_ID_FLAT)) {
             const wrapper = document.createElement('div');
