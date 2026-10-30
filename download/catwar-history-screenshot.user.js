@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      4.0
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. На скриншот накладывается штамп с временем и датой по МСК в стиле часов UwU (Arial, время крупно + «🌍 MSK» + дата снизу), подложка — цвет внешних блоков из игры.
+// @version      5.0
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Над скриншотом сверху по центру — скруглённая коробочка в стиле часов UwU с подложкой из игры: «02:05:44 31.10.26 🌍 MSK» (всё по МСК).
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -33,19 +33,6 @@
 
     function pad(n) {
         return String(n).padStart(2, '0');
-    }
-
-    // Короткие имена дней недели и названия месяцев — как у часов UwU
-    const DAY_SHORT_RU = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-    const MONTH_RU = [
-        'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
-        'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
-    ];
-
-    // "31 (Сб), Октябрь, 2026" — формат standard-режима часов UwU
-    function formatLongDate(msk) {
-        return `${pad(msk.getDate())} (${DAY_SHORT_RU[msk.getDay()]}), ` +
-               `${MONTH_RU[msk.getMonth()]}, ${msk.getFullYear()}`;
     }
 
     function waitForElement(selector, callback, maxAttempts = 100) {
@@ -201,87 +188,73 @@
     }
 
     // =========================================================================
-    //  Штамп на картинке: «часы UwU» — отдельная скруглённая коробочка
+    //  Штамп на картинке: «часы UwU» — отдельная скруглённая коробочка сверху
     // =========================================================================
 
-    // Добавляет снизу canvas полосу с подложкой из игры, на ней —
-    // скруглённую коробочку (border-radius:10px, padding:5px, тонкая рамка),
-    // внутри которой грид: время (Arial bold 2em) + «🌍 MSK» (1em) сверху,
-    // дата «31 (Сб), Октябрь, 2026» (Arial 1.2em) снизу.
+    // Добавляет над canvas белую полосу, по центру которой — скруглённая
+    // коробочка (border-radius:10px, padding:5px, тонкая рамка) с подложкой
+    // из игры. Внутри в одну строку: «02:05:44 31.10.26» + «🌍 MSK».
     function addTimestampBar(srcCanvas) {
         const cssWidth = srcCanvas._cwCssWidth || (srcCanvas.width / 2);
         const scale = srcCanvas.width / Math.max(1, cssWidth);
 
-        const stripHeightCss = 78;
-        const stripHeight = Math.max(56, Math.round(stripHeightCss * scale));
+        const stripHeightCss = 50;
+        const stripHeight = Math.max(40, Math.round(stripHeightCss * scale));
 
         const out = document.createElement('canvas');
         out.width = srcCanvas.width;
-        out.height = srcCanvas.height + stripHeight;
+        out.height = stripHeight + srcCanvas.height; // полоса сверху
         const ctx = out.getContext('2d');
 
-        // Подложка из игры (blocksColor)
+        // Подложка из игры (blocksColor) — для коробочки
         const substrate = getGameSubstrateColor();
         const lum = getLuminance(substrate);
         const isLight = lum > 0.5;
 
-        // 1. Полоса снизу — заливаем подложкой
-        ctx.fillStyle = substrate.css;
-        ctx.fillRect(0, srcCanvas.height, out.width, stripHeight);
+        // 1. Полоса сверху — белая (совпадает с backgroundColor html2canvas)
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, out.width, stripHeight);
 
-        // 2. Тонкая разделительная линия сверху полосы (как border у блоков игры)
-        ctx.fillStyle = isLight ? 'rgba(0,0,0,0.10)' : 'rgba(255,255,255,0.08)';
-        ctx.fillRect(0, srcCanvas.height, out.width, Math.max(1, Math.round(1 * scale)));
+        // 2. Исходный скриншот — ниже полосы
+        ctx.drawImage(srcCanvas, 0, stripHeight);
 
-        // 3. Исходный скриншот поверх
-        ctx.drawImage(srcCanvas, 0, 0);
-
-        // 4. Коробочка часов (стиль UwU: border-radius 10px, padding 5px, 1px рамка)
+        // 3. Коробочка штампа по центру полосы
         const msk = getMoscowDate();
         const timeStr = `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
+        const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${String(msk.getFullYear()).slice(-2)}`;
         const iconStr = '🌍 MSK';
-        const dateStr = formatLongDate(msk);
 
-        // Шрифты: base=14px, time=2em (28), date=1.2em (~17), icon=1em (14) — как в UwU
-        const baseFont = 14 * scale;
-        const timeFont = Math.max(18, 2 * baseFont);
-        const dateFont = Math.max(12, 1.2 * baseFont);
-        const iconFont = Math.max(10, baseFont);
+        // Шрифт: обычный (не bold), средний размер — как на образце
+        const mainFont = Math.max(13, 16 * scale);
+        const iconFont = Math.max(11, 14 * scale);
 
         // Замеры
-        ctx.font = `bold ${timeFont}px Arial, "Segoe UI", sans-serif`;
-        const timeW = ctx.measureText(timeStr).width;
+        const mainText = `${timeStr} ${dateStr}`;
+        ctx.font = `${mainFont}px Arial, "Segoe UI", sans-serif`;
+        const mainW = ctx.measureText(mainText).width;
         ctx.font = `${iconFont}px Arial, "Segoe UI", sans-serif`;
         const iconW = ctx.measureText(iconStr).width;
-        ctx.font = `${dateFont}px Arial, "Segoe UI", sans-serif`;
-        const dateW = ctx.measureText(dateStr).width;
 
-        const innerGap = 6 * scale;     // между временем и иконкой
-        const rowGap = 4 * scale;       // между верхней и нижней строкой
-        const topRowW = timeW + innerGap + iconW;
-        const contentW = Math.max(topRowW, dateW);
-        const topRowH = Math.max(timeFont, iconFont);
-        const contentH = topRowH + rowGap + dateFont;
+        const innerGap = 8 * scale; // между «31.10.26» и «🌍 MSK»
+        const contentW = mainW + innerGap + iconW;
+        const contentH = Math.max(mainFont, iconFont);
 
-        const padCss = 5;
-        const radiusCss = 10;
-        const boxPad = Math.max(3, padCss * scale);
-        const radius = Math.max(6, radiusCss * scale);
+        const boxPad = Math.max(4, 5 * scale);
+        const radius = Math.max(6, 10 * scale);
 
         const boxW = contentW + boxPad * 2;
         const boxH = contentH + boxPad * 2;
 
-        // Коробочка — правый нижний угол полосы, вертикально по центру
-        const sideMargin = Math.round(14 * scale);
-        const boxX = out.width - boxW - sideMargin;
-        const boxY = srcCanvas.height + Math.round((stripHeight - boxH) / 2);
+        // Центр горизонтально, центр вертикально в полосе
+        const boxX = Math.round((out.width - boxW) / 2);
+        const boxY = Math.round((stripHeight - boxH) / 2);
 
-        // Заливка коробочки той же подложкой (рамка её выделит)
+        // Заливка коробочки подложкой из игры
         pathRoundedRect(ctx, boxX, boxY, boxW, boxH, radius);
         ctx.fillStyle = substrate.css;
         ctx.fill();
 
-        // Тонкая рамка (как у UwU — 1px solid #ffffff1a, но адаптируем под свет подложки)
+        // Тонкая рамка (как у UwU — 1px solid #ffffff1a, адаптируем под свет подложки)
         ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.18)';
         ctx.lineWidth = Math.max(1, scale);
         ctx.stroke();
@@ -292,21 +265,15 @@
         ctx.textBaseline = 'top';
         ctx.textAlign = 'left';
 
-        // Верхняя строка: время слева, «🌍 MSK» справа
-        const topY = boxY + boxPad;
+        // Основной текст: «02:05:44 31.10.26» — слева
+        ctx.font = `${mainFont}px Arial, "Segoe UI", sans-serif`;
+        const mainY = boxY + boxPad + Math.round((contentH - mainFont) / 2);
+        ctx.fillText(mainText, boxX + boxPad, mainY);
 
-        ctx.font = `bold ${timeFont}px Arial, "Segoe UI", sans-serif`;
-        ctx.fillText(timeStr, boxX + boxPad, topY);
-
+        // Иконка «🌍 MSK» — справа, выравнена по вертикали с основным текстом
         ctx.font = `${iconFont}px Arial, "Segoe UI", sans-serif`;
-        // Иконку выравниваем по базовой линии времени
-        const iconY = topY + Math.round((timeFont - iconFont) / 2);
-        ctx.fillText(iconStr, boxX + boxPad + timeW + innerGap, iconY);
-
-        // Нижняя строка: дата, занимает всю ширину коробочки
-        const dateY = topY + topRowH + rowGap;
-        ctx.font = `${dateFont}px Arial, "Segoe UI", sans-serif`;
-        ctx.fillText(dateStr, boxX + boxPad, dateY);
+        const iconY = boxY + boxPad + Math.round((contentH - iconFont) / 2);
+        ctx.fillText(iconStr, boxX + boxPad + mainW + innerGap, iconY);
 
         return out;
     }
