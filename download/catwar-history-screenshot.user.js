@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      7.2
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся (на скрине в заголовке остаются только «История» и бейдж часов), в <h2> рядом с заголовком вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). Все современные CSS color-функции санируются, элементы multi-find-* принудительно делаются inline, чтобы html2canvas не мазал подсветку по строке.
+// @version      7.3
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). В onclone html2canvas: <multi-find-1-extension> заменяются на <span> (Multi-Find в клоне не активен, подсветка не смазывается), color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -168,13 +168,48 @@
         'caret-color'
     ];
 
-    function sanitizeColorFunctions(rootEl) {
-        const saved = [];
-        const elements = [rootEl, ...rootEl.querySelectorAll('*')];
+    // =========================================================================
+    //  Санирование клонированного документа (через onclone html2canvas)
+    // =========================================================================
 
+    // В клонированном документе Multi-Find не активен (его JS не работает
+    // в клоне), поэтому безопасно можно:
+    //   1. Заменить <multi-find-1-extension> на обычный <span> с теми же
+    //      background-color/color — иначе html2canvas рендерит custom
+    //      element как block и подсветка «смазывается» по строке.
+    //   2. Санировать color()/oklch()/oklab()/lab()/lch()/hwb() в computed
+    //      стилях — html2canvas их не умеет парсить и падает.
+    function sanitizeClone(clonedDoc, rootEl) {
+        const win = clonedDoc.defaultView;
+
+        // --- 1. Замена multi-find-extension на span ---
+        const mfeTargets = Array.from(rootEl.querySelectorAll('multi-find-1-extension'));
+        mfeTargets.forEach(original => {
+            // Берём инлайн-стиль подсветки напрямую (без computed — он может
+            // быть недоступен в клоне до отрисовки)
+            const inlineBg = original.style.backgroundColor;
+            const inlineColor = original.style.color;
+
+            const span = clonedDoc.createElement('span');
+            span.style.cssText =
+                `background-color: ${inlineBg || 'transparent'}; ` +
+                `color: ${inlineColor || 'inherit'}; ` +
+                `display: inline !important;`;
+
+            while (original.firstChild) {
+                span.appendChild(original.firstChild);
+            }
+            if (original.parentNode) {
+                original.parentNode.replaceChild(span, original);
+            }
+        });
+
+        // --- 2. Санирование color-функций ---
+        if (!win) return;
+        const elements = [rootEl, ...rootEl.querySelectorAll('*')];
         elements.forEach(el => {
             let cs;
-            try { cs = getComputedStyle(el); } catch (e) { return; }
+            try { cs = win.getComputedStyle(el); } catch (e) { return; }
 
             COLOR_PROPS_KEBAB.forEach(prop => {
                 let val;
@@ -183,96 +218,17 @@
                 const lower = val.toLowerCase();
                 if (!UNSUPPORTED_COLOR_FUNCS.some(p => lower.includes(p))) return;
 
-                // Запоминаем предыдущее inline-значение, чтобы восстановить
-                const prevVal = el.style.getPropertyValue(prop);
-                const prevPriority = el.style.getPropertyPriority(prop);
-                saved.push({ el, prop, prevVal, prevPriority });
-
-                // Подбираем безопасную замену
                 let safe;
                 if (prop === 'background-color') {
                     safe = 'rgba(184, 170, 170, 0.55)';
                 } else if (prop === 'box-shadow') {
                     safe = 'none';
-                } else if (prop === 'fill' || prop === 'stroke') {
-                    safe = CLOCK_BG;
                 } else {
                     safe = CLOCK_BG;
                 }
                 el.style.setProperty(prop, safe, 'important');
             });
         });
-
-        // Возвращаем функцию отката
-        return function restore() {
-            saved.forEach(({ el, prop, prevVal, prevPriority }) => {
-                if (prevVal) {
-                    el.style.setProperty(prop, prevVal, prevPriority);
-                } else {
-                    el.style.removeProperty(prop);
-                }
-            });
-        };
-    }
-
-    // =========================================================================
-    //  Фикс конфликта с расширением Multi-Find
-    // =========================================================================
-
-    // Multi-Find оборачивает найденные слова в custom element
-    // <multi-find-1-extension>. html2canvas не понимает custom elements и
-    // рендерит их как block — подсветка растягивается на всю строку
-    // («смазывается»). Инлайн-стиль display:inline не помогает.
-    //
-    // Решение: перед снимком заменяем каждый <multi-find-1-extension> на
-    // обычный <span> с теми же background-color/color (берём из computed
-    // style), принудительным display:inline. Классы HL-* не копируем —
-    // они могут нести display:block в CSS расширения. После снимка —
-    // возвращаем оригинальные custom elements на место.
-    function fixMultiFindDisplay(rootEl) {
-        const targets = Array.from(rootEl.querySelectorAll('multi-find-1-extension'));
-        const replacements = [];
-
-        targets.forEach(original => {
-            // Берём вычисленные стили подсветки
-            let bg = '';
-            let col = '';
-            try {
-                const cs = getComputedStyle(original);
-                bg = cs.backgroundColor || '';
-                col = cs.color || '';
-            } catch (e) {}
-
-            const span = document.createElement('span');
-            // Только нужное: фон, цвет текста, display:inline. Без классов.
-            span.style.cssText =
-                `background-color: ${bg || 'transparent'}; ` +
-                `color: ${col || 'inherit'}; ` +
-                `display: inline !important;`;
-
-            // Переносим всё содержимое оригинала в span
-            while (original.firstChild) {
-                span.appendChild(original.firstChild);
-            }
-
-            // Заменяем в DOM
-            if (original.parentNode) {
-                original.parentNode.replaceChild(span, original);
-            }
-            replacements.push({ span, original });
-        });
-
-        return function restore() {
-            replacements.forEach(({ span, original }) => {
-                if (span.parentNode) {
-                    // Возвращаем содержимое в original
-                    while (span.firstChild) {
-                        original.appendChild(span.firstChild);
-                    }
-                    span.parentNode.replaceChild(original, span);
-                }
-            });
-        };
     }
 
     // =========================================================================
@@ -359,19 +315,15 @@
             void historyBlock.offsetHeight;
         }
 
-        // 4. Санируем color()/oklch()/etc в computed styles внутри td#history
-        const restoreColors = sanitizeColorFunctions(target);
-
-        // 4b. Фикс Multi-Find: делаем все <multi-find-1-extension> inline,
-        //     чтобы html2canvas не мазал подсветку по всей строке.
-        const restoreMultiFind = fixMultiFindDisplay(target);
-
-        // 5. Замеряем размеры
+        // 4. Замеряем размеры
         const captureWidth = target.scrollWidth || target.offsetWidth;
         const captureHeight = mode === 'full'
             ? target.offsetHeight
             : target.clientHeight;
 
+        // Санирование (замена multi-find на span + color-функции) делаем в
+        // onclone — то есть в уже клонированном документе, где Multi-Find
+        // не активен и не сможет вернуть свои custom elements обратно.
         const baseOptions = {
             backgroundColor: '#ffffff',
             scale: scale,
@@ -382,15 +334,18 @@
             height: captureHeight,
             scrollX: 0,
             scrollY: 0,
-            windowWidth: document.documentElement.clientWidth
+            windowWidth: document.documentElement.clientWidth,
+            onclone: function (clonedDoc, element) {
+                const clonedTarget = element || clonedDoc.querySelector('td#history');
+                if (!clonedTarget) return;
+                try { sanitizeClone(clonedDoc, clonedTarget); } catch (e) {
+                    console.warn('[CatWar Screenshot] sanitizeClone упал:', e);
+                }
+            }
         };
 
         function cleanup() {
-            // 1. Восстанавливаем color-функции
-            try { restoreColors(); } catch (e) {}
-            // 1b. Восстанавливаем display у multi-find элементов
-            try { restoreMultiFind(); } catch (e) {}
-            // 2. Восстанавливаем #history_block
+            // 1. Восстанавливаем #history_block
             if (savedBlockStyles && historyBlock) {
                 historyBlock.style.height = savedBlockStyles.height;
                 historyBlock.style.maxHeight = savedBlockStyles.maxHeight;
@@ -399,9 +354,9 @@
                 historyBlock.style.overflowX = savedBlockStyles.overflowX;
                 historyBlock.style.resize = savedBlockStyles.resize;
             }
-            // 3. Удаляем бейдж часов
+            // 2. Удаляем бейдж часов
             removeClockStamp(clockStamp);
-            // 4. Восстанавливаем видимость группы кнопок
+            // 3. Восстанавливаем видимость группы кнопок
             if (group) group.style.display = savedGroupDisplay;
         }
 
