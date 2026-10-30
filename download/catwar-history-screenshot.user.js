@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      7.0
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся (на скрине в заголовке остаются только «История» и бейдж часов), в <h2> рядом с заголовком вставляется бейдж «🌍 02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки). Все современные CSS color-функции (color()/oklch()/oklab()/lab()/lch()/hwb()) санируются перед захватом, чтобы html2canvas не падал.
+// @version      7.1
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся (на скрине в заголовке остаются только «История» и бейдж часов), в <h2> рядом с заголовком вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). Все современные CSS color-функции санируются, элементы multi-find-* принудительно делаются inline, чтобы html2canvas не мазал подсветку по строке.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -106,13 +106,13 @@
 
         const span = document.createElement('span');
         span.id = CLOCK_STAMP_ID;
-        span.textContent = `🌍 ${timeStr} ${dateStr} MSK`;
+        span.textContent = `${timeStr} ${dateStr} MSK`;
         span.style.cssText = [
             'margin-left: 10px',
             'padding: 2px 10px',
             'font-family: Arial, "Segoe UI", sans-serif',
             'font-size: 0.9em',
-            'font-weight: 600',
+            'font-weight: 400',
             'line-height: 1.4',
             'background: ' + CLOCK_BG,
             'color: ' + CLOCK_TEXT,
@@ -216,6 +216,35 @@
     }
 
     // =========================================================================
+    //  Фикс конфликта с расширением Multi-Find
+    // =========================================================================
+
+    // Multi-Find оборачивает найденные слова в custom element
+    // <multi-find-1-extension>. По умолчанию custom elements имеют display:inline,
+    // но html2canvas не знает про это и рендерит их как block — подсветка
+    // растягивается на всю строку («смазывается»).
+    // Решение: перед снимком принудительно ставим display:inline !important
+    // через inline-стиль. После снимка — восстанавливаем.
+    function fixMultiFindDisplay(rootEl) {
+        const targets = Array.from(rootEl.querySelectorAll('multi-find-1-extension'));
+        const saved = targets.map(el => {
+            const prevDisplay = el.style.display;
+            const prevPriority = el.style.getPropertyPriority('display');
+            el.style.setProperty('display', 'inline', 'important');
+            return { el, prevDisplay, prevPriority };
+        });
+        return function restore() {
+            saved.forEach(({ el, prevDisplay, prevPriority }) => {
+                if (prevDisplay) {
+                    el.style.setProperty('display', prevDisplay, prevPriority);
+                } else {
+                    el.style.removeProperty('display');
+                }
+            });
+        };
+    }
+
+    // =========================================================================
     //  Скачивание
     // =========================================================================
 
@@ -302,6 +331,10 @@
         // 4. Санируем color()/oklch()/etc в computed styles внутри td#history
         const restoreColors = sanitizeColorFunctions(target);
 
+        // 4b. Фикс Multi-Find: делаем все <multi-find-1-extension> inline,
+        //     чтобы html2canvas не мазал подсветку по всей строке.
+        const restoreMultiFind = fixMultiFindDisplay(target);
+
         // 5. Замеряем размеры
         const captureWidth = target.scrollWidth || target.offsetWidth;
         const captureHeight = mode === 'full'
@@ -324,6 +357,8 @@
         function cleanup() {
             // 1. Восстанавливаем color-функции
             try { restoreColors(); } catch (e) {}
+            // 1b. Восстанавливаем display у multi-find элементов
+            try { restoreMultiFind(); } catch (e) {}
             // 2. Восстанавливаем #history_block
             if (savedBlockStyles && historyBlock) {
                 historyBlock.style.height = savedBlockStyles.height;
@@ -381,14 +416,14 @@
         const btnFull = document.createElement('button');
         btnFull.type = 'button';
         btnFull.textContent = '📸 Вся история';
-        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «🌍 время дата MSK» по МСК.';
+        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «время дата MSK» по МСК.';
         styleButton(btnFull, 'primary');
         btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
 
         const btnVisible = document.createElement('button');
         btnVisible.type = 'button';
         btnVisible.textContent = '👁 Видимое';
-        btnVisible.title = 'Сохранить скриншот только видимой части истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «🌍 время дата MSK» по МСК.';
+        btnVisible.title = 'Сохранить скриншот только видимой части истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «время дата MSK» по МСК.';
         styleButton(btnVisible, 'secondary');
         btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
 
