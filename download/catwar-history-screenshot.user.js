@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      3.0
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. На скриншот накладывается штамп с временем и датой по МСК в стиле часов UwU (Arial, время крупно + «МСК» + дата снизу), подложка штампа — цвет самого блока из игры.
+// @version      4.0
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. На скриншот накладывается штамп с временем и датой по МСК в стиле часов UwU (Arial, время крупно + «🌍 MSK» + дата снизу), подложка — цвет внешних блоков из игры.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -35,6 +35,19 @@
         return String(n).padStart(2, '0');
     }
 
+    // Короткие имена дней недели и названия месяцев — как у часов UwU
+    const DAY_SHORT_RU = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+    const MONTH_RU = [
+        'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+        'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
+    ];
+
+    // "31 (Сб), Октябрь, 2026" — формат standard-режима часов UwU
+    function formatLongDate(msk) {
+        return `${pad(msk.getDate())} (${DAY_SHORT_RU[msk.getDay()]}), ` +
+               `${MONTH_RU[msk.getMonth()]}, ${msk.getFullYear()}`;
+    }
+
     function waitForElement(selector, callback, maxAttempts = 100) {
         let attempts = 0;
         const tick = () => {
@@ -46,33 +59,76 @@
     }
 
     // =========================================================================
-    //  Цвет подложки из игры
+    //  Цвет подложки из игры (как у часов UwU — blocksColor, не subBlocksColor)
     // =========================================================================
 
-    // Берём вычисленный background-color #history_block и композируем его поверх
-    // белого (html2canvas использует #ffffff как backgroundColor), чтобы получить
-    // непрозрачный rgb-цвет, который можно заливать на canvas.
-    function getGameSubstrateColor() {
-        const el = document.querySelector('#history_block') ||
-                   document.querySelector('td#history') ||
-                   document.body;
-        try {
-            const cs = getComputedStyle(el);
-            const bg = cs.backgroundColor; // напр. "rgba(159, 147, 147, 0.55)"
-            const m = bg.match(/rgba?\(([^)]+)\)/i);
-            if (m) {
-                const parts = m[1].split(',').map(s => parseFloat(s.trim()));
-                const r = parts[0] | 0, g = parts[1] | 0, b = parts[2] | 0;
-                const a = parts.length > 3 ? parts[3] : 1;
-                const cr = Math.round(r * a + 255 * (1 - a));
-                const cg = Math.round(g * a + 255 * (1 - a));
-                const cb = Math.round(b * a + 255 * (1 - a));
-                return `rgb(${cr}, ${cg}, ${cb})`;
-            }
-            return bg || '#b8aaaa';
-        } catch (e) {
-            return '#b8aaaa';
+    // Любой rgba/rgb/hex → непрозрачный rgb() (композит поверх белого)
+    function normalizeToOpaque(bg) {
+        if (!bg) return null;
+        const s = String(bg).trim();
+        const m = s.match(/rgba?\(([^)]+)\)/i);
+        if (m) {
+            const parts = m[1].split(',').map(v => parseFloat(v.trim()));
+            const r = parts[0] | 0, g = parts[1] | 0, b = parts[2] | 0;
+            const a = parts.length > 3 ? parts[3] : 1;
+            const cr = Math.round(r * a + 255 * (1 - a));
+            const cg = Math.round(g * a + 255 * (1 - a));
+            const cb = Math.round(b * a + 255 * (1 - a));
+            return { r: cr, g: cg, b: cb, css: `rgb(${cr}, ${cg}, ${cb})` };
         }
+        if (s.charAt(0) === '#') {
+            let hex = s.slice(1);
+            if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+            if (hex.length === 6) {
+                const r = parseInt(hex.slice(0, 2), 16);
+                const g = parseInt(hex.slice(2, 4), 16);
+                const b = parseInt(hex.slice(4, 6), 16);
+                return { r, g, b, css: `rgb(${r}, ${g}, ${b})` };
+            }
+        }
+        return null;
+    }
+
+    // Берём blocksColor (внешний блок), как это делают часы UwU.
+    // Порядок: --cw3-page-bg → #tr_actions > td → #history_block → fallback.
+    function getGameSubstrateColor() {
+        const tries = [];
+
+        try {
+            const rootCs = getComputedStyle(document.documentElement);
+            const v = rootCs.getPropertyValue('--cw3-page-bg').trim();
+            if (v) tries.push(v);
+        } catch (e) {}
+
+        const outerEl = document.querySelector('#tr_actions > td') ||
+                        document.querySelector('#tr_actions') ||
+                        document.querySelector('#tr_mouth > td') ||
+                        document.querySelector('#tr_tos > td');
+        if (outerEl) {
+            try { tries.push(getComputedStyle(outerEl).backgroundColor); } catch (e) {}
+        }
+
+        const subEl = document.querySelector('#history_block') ||
+                      document.querySelector('td#history');
+        if (subEl) {
+            try { tries.push(getComputedStyle(subEl).backgroundColor); } catch (e) {}
+        }
+
+        for (const raw of tries) {
+            const norm = normalizeToOpaque(raw);
+            if (norm) return norm;
+        }
+        return { r: 0xb8, g: 0xaa, b: 0xaa, css: 'rgb(184, 170, 170)' };
+    }
+
+    function getLuminance(rgbObj) {
+        if (!rgbObj) return 0.5;
+        const r = rgbObj.r / 255;
+        const g = rgbObj.g / 255;
+        const b = rgbObj.b / 255;
+        // sRGB → relative luminance (упрощённая)
+        const lin = c => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
     }
 
     // =========================================================================
@@ -126,79 +182,131 @@
     }
 
     // =========================================================================
-    //  Штамп на картинке: стиль часов UwU
+    //  Рисование: скруглённый прямоугольник
     // =========================================================================
 
-    // Рисует снизу canvas полосу подложкой из игры и кладёт на неё время/МСК/дату
-    // шрифтом Arial (время крупно, МСК рядом, дата снизу) — как часы UwU.
+    function pathRoundedRect(ctx, x, y, w, h, r) {
+        const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + w - radius, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+        ctx.lineTo(x + w, y + h - radius);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+        ctx.lineTo(x + radius, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+    }
+
+    // =========================================================================
+    //  Штамп на картинке: «часы UwU» — отдельная скруглённая коробочка
+    // =========================================================================
+
+    // Добавляет снизу canvas полосу с подложкой из игры, на ней —
+    // скруглённую коробочку (border-radius:10px, padding:5px, тонкая рамка),
+    // внутри которой грид: время (Arial bold 2em) + «🌍 MSK» (1em) сверху,
+    // дата «31 (Сб), Октябрь, 2026» (Arial 1.2em) снизу.
     function addTimestampBar(srcCanvas) {
         const cssWidth = srcCanvas._cwCssWidth || (srcCanvas.width / 2);
         const scale = srcCanvas.width / Math.max(1, cssWidth);
 
-        const barHeightCss = 72;
-        const barHeight = Math.max(50, Math.round(barHeightCss * scale));
-        const sidePadCss = 14;
-        const sidePad = Math.round(sidePadCss * scale);
+        const stripHeightCss = 78;
+        const stripHeight = Math.max(56, Math.round(stripHeightCss * scale));
 
         const out = document.createElement('canvas');
         out.width = srcCanvas.width;
-        out.height = srcCanvas.height + barHeight;
+        out.height = srcCanvas.height + stripHeight;
         const ctx = out.getContext('2d');
 
-        // 1. Подложка из игры
+        // Подложка из игры (blocksColor)
         const substrate = getGameSubstrateColor();
-        ctx.fillStyle = substrate;
-        ctx.fillRect(0, srcCanvas.height, out.width, barHeight);
+        const lum = getLuminance(substrate);
+        const isLight = lum > 0.5;
 
-        // 2. Тонкая разделительная полоска сверху (по мотивам border у часов UwU,
-        //    но адаптирована под светлую подложку)
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.14)';
+        // 1. Полоса снизу — заливаем подложкой
+        ctx.fillStyle = substrate.css;
+        ctx.fillRect(0, srcCanvas.height, out.width, stripHeight);
+
+        // 2. Тонкая разделительная линия сверху полосы (как border у блоков игры)
+        ctx.fillStyle = isLight ? 'rgba(0,0,0,0.10)' : 'rgba(255,255,255,0.08)';
         ctx.fillRect(0, srcCanvas.height, out.width, Math.max(1, Math.round(1 * scale)));
 
-        // 3. Исходный скриншот
+        // 3. Исходный скриншот поверх
         ctx.drawImage(srcCanvas, 0, 0);
 
-        // 4. Контент: время + МСК + дата, шрифт Arial (как у часов UwU)
+        // 4. Коробочка часов (стиль UwU: border-radius 10px, padding 5px, 1px рамка)
         const msk = getMoscowDate();
         const timeStr = `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
-        const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${msk.getFullYear()}`;
+        const iconStr = '🌍 MSK';
+        const dateStr = formatLongDate(msk);
 
-        // У часов UwU: time=2em (от base 14px => 28px), date=1.2em (~17px), icon/label — base
-        const timeFontSize = Math.max(20, Math.round(28 * scale));
-        const dateFontSize = Math.max(13, Math.round(17 * scale));
-        const labelFontSize = Math.max(11, Math.round(13 * scale));
-        const gap = Math.round(6 * scale);
+        // Шрифты: base=14px, time=2em (28), date=1.2em (~17), icon=1em (14) — как в UwU
+        const baseFont = 14 * scale;
+        const timeFont = Math.max(18, 2 * baseFont);
+        const dateFont = Math.max(12, 1.2 * baseFont);
+        const iconFont = Math.max(10, baseFont);
 
-        ctx.font = `bold ${timeFontSize}px Arial, "Segoe UI", sans-serif`;
+        // Замеры
+        ctx.font = `bold ${timeFont}px Arial, "Segoe UI", sans-serif`;
         const timeW = ctx.measureText(timeStr).width;
-        ctx.font = `${labelFontSize}px Arial, "Segoe UI", sans-serif`;
-        const labelW = ctx.measureText('МСК').width;
-        ctx.font = `${dateFontSize}px Arial, "Segoe UI", sans-serif`;
+        ctx.font = `${iconFont}px Arial, "Segoe UI", sans-serif`;
+        const iconW = ctx.measureText(iconStr).width;
+        ctx.font = `${dateFont}px Arial, "Segoe UI", sans-serif`;
         const dateW = ctx.measureText(dateStr).width;
 
-        const topRowW = timeW + gap + labelW;
+        const innerGap = 6 * scale;     // между временем и иконкой
+        const rowGap = 4 * scale;       // между верхней и нижней строкой
+        const topRowW = timeW + innerGap + iconW;
         const contentW = Math.max(topRowW, dateW);
-        const contentH = timeFontSize + dateFontSize + gap;
+        const topRowH = Math.max(timeFont, iconFont);
+        const contentH = topRowH + rowGap + dateFont;
 
-        // Прижимаем вправо
-        const contentX = out.width - sidePad - contentW;
-        const contentY = srcCanvas.height + Math.round((barHeight - contentH) / 2);
+        const padCss = 5;
+        const radiusCss = 10;
+        const pad = Math.max(3, padCss * scale);
+        const radius = Math.max(6, radiusCss * scale);
 
-        ctx.fillStyle = '#000000'; // цвет текста как у часов UwU
+        const boxW = contentW + pad * 2;
+        const boxH = contentH + pad * 2;
+
+        // Коробочка — правый нижний угол полосы, вертикально по центру
+        const sideMargin = Math.round(14 * scale);
+        const boxX = out.width - boxW - sideMargin;
+        const boxY = srcCanvas.height + Math.round((stripHeight - boxH) / 2);
+
+        // Заливка коробочки той же подложкой (рамка её выделит)
+        pathRoundedRect(ctx, boxX, boxY, boxW, boxH, radius);
+        ctx.fillStyle = substrate.css;
+        ctx.fill();
+
+        // Тонкая рамка (как у UwU — 1px solid #ffffff1a, но адаптируем под свет подложки)
+        ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.18)';
+        ctx.lineWidth = Math.max(1, scale);
+        ctx.stroke();
+
+        // Текст
+        const textColor = isLight ? '#000000' : '#d5d5d5';
+        ctx.fillStyle = textColor;
         ctx.textBaseline = 'top';
         ctx.textAlign = 'left';
 
-        // Время (крупно)
-        ctx.font = `bold ${timeFontSize}px Arial, "Segoe UI", sans-serif`;
-        ctx.fillText(timeStr, contentX, contentY);
+        // Верхняя строка: время слева, «🌍 MSK» справа
+        const topY = boxY + pad;
 
-        // МСК (рядом со временем, выравнен по центру строки времени)
-        ctx.font = `${labelFontSize}px Arial, "Segoe UI", sans-serif`;
-        ctx.fillText('МСК', contentX + timeW + gap, contentY + Math.round((timeFontSize - labelFontSize) / 2));
+        ctx.font = `bold ${timeFont}px Arial, "Segoe UI", sans-serif`;
+        ctx.fillText(timeStr, boxX + pad, topY);
 
-        // Дата (снизу)
-        ctx.font = `${dateFontSize}px Arial, "Segoe UI", sans-serif`;
-        ctx.fillText(dateStr, contentX, contentY + timeFontSize + gap);
+        ctx.font = `${iconFont}px Arial, "Segoe UI", sans-serif`;
+        // Иконку выравниваем по базовой линии времени
+        const iconY = topY + Math.round((timeFont - iconFont) / 2);
+        ctx.fillText(iconStr, boxX + pad + timeW + innerGap, iconY);
+
+        // Нижняя строка: дата, занимает всю ширину коробочки
+        const dateY = topY + topRowH + rowGap;
+        ctx.font = `${dateFont}px Arial, "Segoe UI", sans-serif`;
+        ctx.fillText(dateStr, boxX + pad, dateY);
 
         return out;
     }
@@ -296,8 +404,7 @@
             target.style.overflowY = 'visible';
             target.style.overflowX = 'visible';
             target.style.resize = 'none';
-            // force reflow, чтобы html2canvas увидел новые размеры
-            void target.offsetHeight;
+            void target.offsetHeight; // force reflow
         }
 
         const captureWidth = target.scrollWidth || target.offsetWidth;
@@ -379,14 +486,14 @@
         const btnFull = document.createElement('button');
         btnFull.type = 'button';
         btnFull.textContent = '📸 Вся история';
-        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (полный захват). На картинке будет штамп с временем и датой по МСК в стиле часов UwU.';
+        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (полный захват). Штамп в стиле часов UwU: время, «🌍 MSK», дата — по МСК.';
         styleButton(btnFull, 'primary');
         btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
 
         const btnVisible = document.createElement('button');
         btnVisible.type = 'button';
         btnVisible.textContent = '👁 Видимое';
-        btnVisible.title = 'Сохранить скриншот только видимой части истории. На картинке будет штамп с временем и датой по МСК в стиле часов UwU.';
+        btnVisible.title = 'Сохранить скриншот только видимой части истории. Штамп в стиле часов UwU: время, «🌍 MSK», дата — по МСК.';
         styleButton(btnVisible, 'secondary');
         btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
 
