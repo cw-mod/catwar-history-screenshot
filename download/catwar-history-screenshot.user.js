@@ -265,11 +265,11 @@
 
         const padCss = 5;
         const radiusCss = 10;
-        const pad = Math.max(3, padCss * scale);
+        const boxPad = Math.max(3, padCss * scale);
         const radius = Math.max(6, radiusCss * scale);
 
-        const boxW = contentW + pad * 2;
-        const boxH = contentH + pad * 2;
+        const boxW = contentW + boxPad * 2;
+        const boxH = contentH + boxPad * 2;
 
         // Коробочка — правый нижний угол полосы, вертикально по центру
         const sideMargin = Math.round(14 * scale);
@@ -293,20 +293,20 @@
         ctx.textAlign = 'left';
 
         // Верхняя строка: время слева, «🌍 MSK» справа
-        const topY = boxY + pad;
+        const topY = boxY + boxPad;
 
         ctx.font = `bold ${timeFont}px Arial, "Segoe UI", sans-serif`;
-        ctx.fillText(timeStr, boxX + pad, topY);
+        ctx.fillText(timeStr, boxX + boxPad, topY);
 
         ctx.font = `${iconFont}px Arial, "Segoe UI", sans-serif`;
         // Иконку выравниваем по базовой линии времени
         const iconY = topY + Math.round((timeFont - iconFont) / 2);
-        ctx.fillText(iconStr, boxX + pad + timeW + innerGap, iconY);
+        ctx.fillText(iconStr, boxX + boxPad + timeW + innerGap, iconY);
 
         // Нижняя строка: дата, занимает всю ширину коробочки
         const dateY = topY + topRowH + rowGap;
         ctx.font = `${dateFont}px Arial, "Segoe UI", sans-serif`;
-        ctx.fillText(dateStr, boxX + pad, dateY);
+        ctx.fillText(dateStr, boxX + boxPad, dateY);
 
         return out;
     }
