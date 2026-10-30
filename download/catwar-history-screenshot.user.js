@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      7.3
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). В onclone html2canvas: <multi-find-1-extension> заменяются на <span> (Multi-Find в клоне не активен, подсветка не смазывается), color()/oklch()/etc санируются.
+// @version      7.4
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). В onclone html2canvas: <multi-find-1-extension> разбивается на отдельные слова в <span> (одно слово — один span, подсветка не смазывается при переносе строки), color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -174,33 +174,47 @@
 
     // В клонированном документе Multi-Find не активен (его JS не работает
     // в клоне), поэтому безопасно можно:
-    //   1. Заменить <multi-find-1-extension> на обычный <span> с теми же
-    //      background-color/color — иначе html2canvas рендерит custom
-    //      element как block и подсветка «смазывается» по строке.
+    //   1. Заменить <multi-find-1-extension> на набор <span> по одному на
+    //      каждое слово (с пробелами как text nodes между ними). Иначе
+    //      html2canvas рендерит span с многословным текстом и background-color
+    //      как block при переносе строки — подсветка «смазывается».
     //   2. Санировать color()/oklch()/oklab()/lab()/lch()/hwb() в computed
     //      стилях — html2canvas их не умеет парсить и падает.
     function sanitizeClone(clonedDoc, rootEl) {
         const win = clonedDoc.defaultView;
 
-        // --- 1. Замена multi-find-extension на span ---
+        // --- 1. Замена multi-find-extension на набор слов в span ---
         const mfeTargets = Array.from(rootEl.querySelectorAll('multi-find-1-extension'));
         mfeTargets.forEach(original => {
-            // Берём инлайн-стиль подсветки напрямую (без computed — он может
-            // быть недоступен в клоне до отрисовки)
             const inlineBg = original.style.backgroundColor;
             const inlineColor = original.style.color;
 
-            const span = clonedDoc.createElement('span');
-            span.style.cssText =
+            // Собираем CSS для каждого слова
+            const wordCss =
                 `background-color: ${inlineBg || 'transparent'}; ` +
                 `color: ${inlineColor || 'inherit'}; ` +
                 `display: inline !important;`;
 
-            while (original.firstChild) {
-                span.appendChild(original.firstChild);
-            }
+            const fragment = clonedDoc.createDocumentFragment();
+            const text = original.textContent || '';
+            // Разбиваем с сохранением пробельных групп
+            const parts = text.split(/(\s+)/);
+            parts.forEach(part => {
+                if (!part) return;
+                if (/^\s+$/.test(part)) {
+                    // Пробелы — text node, без подсветки
+                    fragment.appendChild(clonedDoc.createTextNode(part));
+                } else {
+                    // Слово — span с подсветкой
+                    const span = clonedDoc.createElement('span');
+                    span.style.cssText = wordCss;
+                    span.textContent = part;
+                    fragment.appendChild(span);
+                }
+            });
+
             if (original.parentNode) {
-                original.parentNode.replaceChild(span, original);
+                original.parentNode.replaceChild(fragment, original);
             }
         });
 
