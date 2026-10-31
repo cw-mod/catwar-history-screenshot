@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      11.0
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
-// @author       z.ai
+// @version      1.0.0
+// @description  Скриншот истории CatWar с бейджем времени по МСК
+// @author       кошечка
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
 // @match        https://catwar.su/
@@ -20,20 +20,9 @@
 
     const GROUP_ID = 'cw-history-screenshot-group';
     const GROUP_ID_FLAT = 'cw-history-screenshot-group-flat';
-
-    // Цвет бейджа часов (по запросу пользователя)
     const CLOCK_BG = 'rgb(184, 170, 170)';
     const CLOCK_TEXT = '#000000';
-
-    // Цвет подложки td#history (как он выглядит в игре — непрозрачный).
-    // В CSS игры фон задан как rgba(...,0.7), html2canvas рендерит его поверх
-    // белого и получает светлый rgb(172,158,162). Подменяем на непрозрачный
-    // rgb(107,86,88), чтобы было как в игре.
     const TARGET_BG_COLOR = 'rgb(107, 86, 88)';
-
-    // =========================================================================
-    //  Время по МСК (UTC+3)
-    // =========================================================================
 
     function getMoscowDate() {
         const now = new Date();
@@ -55,13 +44,8 @@
         tick();
     }
 
-    // =========================================================================
-    //  Стиль кнопок (без color-mix — html2canvas его не парсит)
-    // =========================================================================
-
     function styleButton(btn, variant) {
         const isPrimary = variant === 'primary';
-        // Обычные hex/rgba, никаких color-mix() или var() с color-mix внутри
         const baseBg = isPrimary ? '#d0b690' : 'rgba(255, 255, 255, 0.45)';
         const baseColor = isPrimary ? '#ffffff' : '#09060D';
         const hoverBg = isPrimary ? '#b89c70' : 'rgba(255, 255, 255, 0.7)';
@@ -100,34 +84,18 @@
         });
     }
 
-    // =========================================================================
-    //  Бейдж часов — рисуется прямо на canvas после захвата
-    // =========================================================================
-
-    // Html2canvas не умеет рендерить двухуровневый layout (🌍 над MSK) внутри
-    // одного inline-элемента — flex, table, block-внутри-inline-block, <br>
-    // с white-space:pre — всё игнорируется, бейдж получается пустым.
-    // Поэтому бейдж рисуем сами, через ctx.fillText, ПОСЛЕ захвата canvas.
-    //
-    // Layout (всё на одной строке, 🌍 над MSK как дробь, MSK меньше):
-    //   ┌──────────────────────────────────────┐
-    //   │ 03:55:04 31.10.26    │   🌍   │      │
-    //   │                      │  MSK   │      │
-    //   └──────────────────────────────────────┘
     function drawClockStampOnCanvas(ctx, scale, targetRect, h2Rect) {
         const msk = getMoscowDate();
         const timeStr = `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
         const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${String(msk.getFullYear()).slice(-2)}`;
 
-        // Размеры шрифтов (в canvas пикселях)
         const mainFont = Math.max(20, 28 * scale);
-        const iconFont = Math.max(14, 18 * scale);
-        const mskFont = Math.max(11, 14 * scale);   // MSK меньше основного шрифта
+        const iconFont = Math.max(14, 14 * scale);
+        const mskFont = Math.max(11, 14 * scale);
 
         const mainText = `${timeStr} ${dateStr}`;
-        const iconChar = '\u{1F30D}\u{FE0E}';   // 🌍 + U+FE0E (монохромная)
+        const iconChar = '\u{1F30D}\u{FE0E}';
 
-        // Замеры
         ctx.font = `${mainFont}px Arial`;
         const mainW = ctx.measureText(mainText).width;
 
@@ -137,10 +105,9 @@
         ctx.font = `${mskFont}px Arial`;
         const mskW = ctx.measureText('MSK').width;
 
-        // Layout бокса
         const boxPad = 5 * scale;
-        const gap = 6 * scale;          // между mainText и правой колонкой
-        const smallGap = 1 * scale;     // между 🌍 и MSK
+        const gap = 6 * scale;
+        const smallGap = 1 * scale;
         const rightColW = Math.max(iconW, mskW);
         const rightColH = iconFont + smallGap + mskFont;
         const contentH = Math.max(mainFont, rightColH);
@@ -148,8 +115,6 @@
         const boxW = boxPad + mainW + gap + rightColW + boxPad;
         const boxH = boxPad + contentH + boxPad;
 
-        // Бейдж рядом с текстом «История» — справа от <a> внутри h2.
-        // Вертикально — по центру h2.
         let boxX, boxY;
         if (h2Rect) {
             const h2RightOnCanvas = (h2Rect.right - targetRect.left) * scale;
@@ -161,21 +126,6 @@
             boxY = 10 * scale;
         }
 
-        console.info('[CatWar Screenshot] drawClockStampOnCanvas:', {
-            canvasW: ctx.canvas.width,
-            canvasH: ctx.canvas.height,
-            boxX: boxX,
-            boxY: boxY,
-            boxW: boxW,
-            boxH: boxH,
-            mainW: mainW,
-            iconW: iconW,
-            mskW: mskW,
-            scale: scale,
-            h2Rect: h2Rect ? 'yes' : 'null'
-        });
-
-        // Заливка фона со скруглёнными углами
         const r = Math.min(10 * scale, boxW / 2, boxH / 2);
         ctx.fillStyle = CLOCK_BG;
         ctx.beginPath();
@@ -191,45 +141,31 @@
         ctx.closePath();
         ctx.fill();
 
-        // Текст: чёрный
         ctx.fillStyle = CLOCK_TEXT;
 
         const contentTop = boxY + boxPad;
         const contentCenterY = contentTop + contentH / 2;
 
-        // Левая часть: время + дата (слева бейджа)
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
         ctx.font = `${mainFont}px Arial`;
         ctx.fillText(mainText, boxX + boxPad, contentCenterY);
 
-        // Правая колонка: 🌍 сверху, MSK снизу (справа бейджа)
         const rightColX = boxX + boxPad + mainW + gap;
         const rightColCenterX = rightColX + rightColW / 2;
         const rightColTop = contentTop + (contentH - rightColH) / 2;
 
-        // 🌍 (числитель)
         ctx.textAlign = 'center';
         ctx.font = `${iconFont}px Arial`;
         ctx.fillText(iconChar, rightColCenterX, rightColTop + iconFont / 2);
 
-        // MSK (знаменатель, меньше)
         ctx.font = `${mskFont}px Arial`;
         ctx.fillText('MSK', rightColCenterX, rightColTop + iconFont + smallGap + mskFont / 2);
 
-        // Восстанавливаем ctx
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
     }
 
-    // =========================================================================
-    //  Санирование современных CSS color-функций
-    // =========================================================================
-
-    // html2canvas не умеет парсить color(), oklch(), oklab(), lab(), lch(), hwb().
-    // Пробегаем по всем элементам внутри td#history, и если в computed style
-    // какого-то цветового свойства есть такая функция — подменяем inline-стилем
-    // на безопасный цвет. После захвата — восстанавливаем.
     const UNSUPPORTED_COLOR_FUNCS = ['color(', 'oklch(', 'oklab(', 'lab(', 'lch(', 'hwb('];
 
     const COLOR_PROPS_KEBAB = [
@@ -248,30 +184,15 @@
         'caret-color'
     ];
 
-    // =========================================================================
-    //  Санирование клонированного документа (через onclone html2canvas)
-    // =========================================================================
-
-    // В клонированном документе Multi-Find не активен (его JS не работает
-    // в клоне), поэтому безопасно можно:
-    //   1. Заменить <multi-find-1-extension> на набор <span> по одному на
-    //      каждое слово (display: inline-block) + <span> с пробелами между
-    //      ними (display: inline-block, transparent). Иначе html2canvas
-    //      рендерит подряд идущие inline-span с одинаковым фоном как один
-    //      сплошной блок — подсветка «слипается».
-    //   2. Санировать color()/oklch()/oklab()/lab()/lch()/hwb() в computed
-    //      стилях — html2canvas их не умеет парсить и падает.
     function sanitizeClone(clonedDoc, rootEl) {
         const win = clonedDoc.defaultView;
         let replacedCount = 0;
 
-        // --- 1. Замена multi-find-extension на набор слов в inline-block ---
         const mfeTargets = Array.from(rootEl.querySelectorAll('multi-find-1-extension'));
         mfeTargets.forEach(original => {
             let inlineBg = original.style.backgroundColor;
             let inlineColor = original.style.color;
 
-            // Если инлайн-стиля нет — берём из computed
             if ((!inlineBg || !inlineColor) && win) {
                 try {
                     const cs = win.getComputedStyle(original);
@@ -280,8 +201,6 @@
                 } catch (e) {}
             }
 
-            // inline-block: имеет явную ширину по содержимому, не растягивается
-            // на всю строку и не сливается с соседями.
             const wordCss =
                 `background-color: ${inlineBg || 'transparent'}; ` +
                 `color: ${inlineColor || 'inherit'}; ` +
@@ -290,9 +209,6 @@
                 `margin: 0; ` +
                 `line-height: inherit;`;
 
-            // Пробелы — отдельный span с transparent фоном и inline-block,
-            // чтобы html2canvas точно видел разделитель между подсвеченными
-            // словами (text node может рендериться с нулевой шириной).
             const spaceCss =
                 `display: inline-block; ` +
                 `background: transparent;`;
@@ -321,15 +237,8 @@
             }
         });
 
-        console.info('[CatWar Screenshot] sanitizeClone: заменено ' + replacedCount + ' multi-find элементов');
-
-        // --- 1b. Подменяем фон td#history на непрозрачный rgb(107,86,88) ---
-        // В CSS игры фон задан как rgba(...,0.7), html2canvas рендерит поверх
-        // белого и получает светлый rgb(172,158,162). Подменяем на непрозрачный
-        // тёмный, как в игре.
         rootEl.style.setProperty('background-color', TARGET_BG_COLOR, 'important');
 
-        // --- 2. Санирование color-функций ---
         if (!win) return;
         const elements = [rootEl, ...rootEl.querySelectorAll('*')];
         elements.forEach(el => {
@@ -356,10 +265,6 @@
         });
     }
 
-    // =========================================================================
-    //  Скачивание
-    // =========================================================================
-
     function downloadCanvas(canvas, modeSlug) {
         const msk = getMoscowDate();
         const stamp =
@@ -383,10 +288,6 @@
         }, 'image/png');
     }
 
-    // =========================================================================
-    //  Захват
-    // =========================================================================
-
     function takeScreenshot(btn, mode) {
         const target =
             document.querySelector('td#history') ||
@@ -409,20 +310,13 @@
 
         const scale = Math.min(window.devicePixelRatio || 1.5, 2);
 
-        // 1. Прячем группу кнопок 📲/👁 — на скрине в заголовке будут только
-        //    «История» и бейдж часов (бейдж рисуем на canvas после захвата).
         const group = document.getElementById(GROUP_ID) ||
                       document.getElementById(GROUP_ID_FLAT);
         const savedGroupDisplay = group ? group.style.display : null;
         if (group) group.style.display = 'none';
 
-        // 2. Замеряем видимые размеры ДО раскрытия (для visible режима и
-        //    для позиционирования бейджа относительно h2)
         const historyBlock = target.querySelector('#history_block');
         const h2El = target.querySelector('h2');
-        // Для бейджа ищем <a> внутри h2 (текст «История») — h2 это block,
-        // его right = правому краю td#history, места для бейджа справа нет.
-        // <a> узкий, справа от него есть место.
         const h2Link = h2El ? h2El.querySelector('a') : null;
 
         const targetRect = target.getBoundingClientRect();
@@ -430,15 +324,10 @@
         const h2LinkRect = h2Link ? h2Link.getBoundingClientRect() : h2FullRect;
 
         const visibleClientHeight = targetRect.height;
-        // Для обрезки visible — используем h2FullRect (весь h2)
         const h2OffsetInTarget = h2FullRect ? (h2FullRect.top - targetRect.top) : 0;
         const h2Height = h2FullRect ? h2FullRect.height : 0;
         const scrollTop = historyBlock ? historyBlock.scrollTop : 0;
 
-        // 4. ВСЕГДА раскрываем #history_block — и для full, и для visible.
-        //    Иначе html2canvas рендерит #history_block со скроллом, и
-        //    multi-find-extension, которые частично срезаны скроллом,
-        //    рендерятся с растянутой подсветкой (мазня).
         let savedBlockStyles = null;
         if (historyBlock) {
             savedBlockStyles = {
@@ -458,13 +347,9 @@
             void historyBlock.offsetHeight;
         }
 
-        // 5. Замеряем размеры ПОСЛЕ раскрытия
         const captureWidth = target.scrollWidth || target.offsetWidth;
         const captureHeight = target.offsetHeight;
 
-        // Санирование (замена multi-find на span + color-функции) делаем в
-        // onclone — то есть в уже клонированном документе, где Multi-Find
-        // не активен и не сможет вернуть свои custom elements обратно.
         const baseOptions = {
             backgroundColor: '#ffffff',
             scale: scale,
@@ -486,7 +371,6 @@
         };
 
         function cleanup() {
-            // 1. Восстанавливаем #history_block
             if (savedBlockStyles && historyBlock) {
                 historyBlock.style.height = savedBlockStyles.height;
                 historyBlock.style.maxHeight = savedBlockStyles.maxHeight;
@@ -495,19 +379,12 @@
                 historyBlock.style.overflowX = savedBlockStyles.overflowX;
                 historyBlock.style.resize = savedBlockStyles.resize;
             }
-            // 2. Восстанавливаем видимость группы кнопок
-            //    (бейдж часов не в DOM — рисуется на canvas, восстанавливать нечего)
             if (group) group.style.display = savedGroupDisplay;
         }
 
         function finalize(rawCanvas) {
             cleanup();
 
-            // Для visible режима — обрезаем canvas до видимой области.
-            // После раскрытия canvas содержит полный td#history: padding.top +
-            // h2 + полная #history_block (без скролла).
-            // Хотим показать: padding.top + h2 + видимую часть #history_block
-            // (с учётом scrollTop).
             let finalCanvas = rawCanvas;
             if (mode === 'visible') {
                 try {
@@ -541,8 +418,6 @@
                     console.warn('[CatWar Screenshot] Обрезка visible упала:', e);
                 }
             } else {
-                // Для full режима — копируем rawCanvas на новый canvas,
-                // потому что fillText может не работать на canvas от html2canvas.
                 try {
                     const copyCanvas = document.createElement('canvas');
                     copyCanvas.width = rawCanvas.width;
@@ -555,10 +430,6 @@
                 }
             }
 
-            // Рисуем бейдж часов прямо на canvas (после обрезки для visible,
-            // или на rawCanvas для full). Html2canvas не умеет двухуровневый
-            // layout — поэтому рисуем сами через ctx.fillText.
-            // Позиция — справа от текста «История» (<a> внутри h2).
             try {
                 const finalCtx = finalCanvas.getContext('2d');
                 drawClockStampOnCanvas(finalCtx, scale, targetRect, h2LinkRect);
@@ -594,10 +465,6 @@
             });
     }
 
-    // =========================================================================
-    //  Группа кнопок
-    // =========================================================================
-
     function buildGroup() {
         const group = document.createElement('span');
         group.id = GROUP_ID;
@@ -606,14 +473,14 @@
         const btnFull = document.createElement('button');
         btnFull.type = 'button';
         btnFull.textContent = '📸 Вся история';
-        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «время дата MSK» по МСК.';
+        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (с заголовком).';
         styleButton(btnFull, 'primary');
         btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
 
         const btnVisible = document.createElement('button');
         btnVisible.type = 'button';
         btnVisible.textContent = '👁 Видимое';
-        btnVisible.title = 'Сохранить скриншот только видимой части истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «время дата MSK» по МСК.';
+        btnVisible.title = 'Сохранить скриншот только видимой части истории (с заголовком).';
         styleButton(btnVisible, 'secondary');
         btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
 
@@ -644,10 +511,6 @@
             historyBlock.insertBefore(wrapper, historyBlock.firstChild);
         }
     }
-
-    // =========================================================================
-    //  Инициализация
-    // =========================================================================
 
     waitForElement('#history_block', ensureButton);
     waitForElement('td#history', ensureButton);

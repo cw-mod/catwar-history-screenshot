@@ -1,0 +1,669 @@
+     1→     1→// ==UserScript==
+     2→     2→// @name         CatWar — Скриншот истории
+     3→     3→// @namespace    catwar-history-screenshot
+     4→     4→// @version      11.0
+     5→     5→// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
+     6→     6→// @author       z.ai
+     7→     7→// @match        https://catwar.su/cw3/*
+     8→     8→// @match        https://catwar.su/cw3
+     9→     9→// @match        https://catwar.su/
+    10→    10→// @match        http://catwar.su/cw3/*
+    11→    11→// @match        http://catwar.su/
+    12→    12→// @require      https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
+    13→    13→// @grant        none
+    14→    14→// @run-at       document-idle
+    15→    15→// @noframes
+    16→    16→// ==/UserScript==
+    17→    17→
+    18→    18→(function () {
+    19→    19→    'use strict';
+    20→    20→
+    21→    21→    const GROUP_ID = 'cw-history-screenshot-group';
+    22→    22→    const GROUP_ID_FLAT = 'cw-history-screenshot-group-flat';
+    23→    23→
+    24→    24→    // Цвет бейджа часов (по запросу пользователя)
+    25→    25→    const CLOCK_BG = 'rgb(184, 170, 170)';
+    26→    26→    const CLOCK_TEXT = '#000000';
+    27→    27→
+    28→    28→    // Цвет подложки td#history (как он выглядит в игре — непрозрачный).
+    29→    29→    // В CSS игры фон задан как rgba(...,0.7), html2canvas рендерит его поверх
+    30→    30→    // белого и получает светлый rgb(172,158,162). Подменяем на непрозрачный
+    31→    31→    // rgb(107,86,88), чтобы было как в игре.
+    32→    32→    const TARGET_BG_COLOR = 'rgb(107, 86, 88)';
+    33→    33→
+    34→    34→    // =========================================================================
+    35→    35→    //  Время по МСК (UTC+3)
+    36→    36→    // =========================================================================
+    37→    37→
+    38→    38→    function getMoscowDate() {
+    39→    39→        const now = new Date();
+    40→    40→        const moscowMs = now.getTime() + (now.getTimezoneOffset() * 60000) + (3 * 60 * 60000);
+    41→    41→        return new Date(moscowMs);
+    42→    42→    }
+    43→    43→
+    44→    44→    function pad(n) {
+    45→    45→        return String(n).padStart(2, '0');
+    46→    46→    }
+    47→    47→
+    48→    48→    function waitForElement(selector, callback, maxAttempts = 100) {
+    49→    49→        let attempts = 0;
+    50→    50→        const tick = () => {
+    51→    51→            const el = document.querySelector(selector);
+    52→    52→            if (el) return callback(el);
+    53→    53→            if (++attempts < maxAttempts) setTimeout(tick, 200);
+    54→    54→        };
+    55→    55→        tick();
+    56→    56→    }
+    57→    57→
+    58→    58→    // =========================================================================
+    59→    59→    //  Стиль кнопок (без color-mix — html2canvas его не парсит)
+    60→    60→    // =========================================================================
+    61→    61→
+    62→    62→    function styleButton(btn, variant) {
+    63→    63→        const isPrimary = variant === 'primary';
+    64→    64→        // Обычные hex/rgba, никаких color-mix() или var() с color-mix внутри
+    65→    65→        const baseBg = isPrimary ? '#d0b690' : 'rgba(255, 255, 255, 0.45)';
+    66→    66→        const baseColor = isPrimary ? '#ffffff' : '#09060D';
+    67→    67→        const hoverBg = isPrimary ? '#b89c70' : 'rgba(255, 255, 255, 0.7)';
+    68→    68→
+    69→    69→        btn.style.cssText = [
+    70→    70→            'margin-left: 6px',
+    71→    71→            'padding: 2px 10px',
+    72→    72→            'font-size: 0.85em',
+    73→    73→            'font-weight: 600',
+    74→    74→            'line-height: 1.4',
+    75→    75→            'cursor: pointer',
+    76→    76→            'background: ' + baseBg,
+    77→    77→            'color: ' + baseColor,
+    78→    78→            'border: 1px solid rgba(0, 0, 0, 0.16)',
+    79→    79→            'border-radius: 6px',
+    80→    80→            'vertical-align: middle',
+    81→    81→            'user-select: none',
+    82→    82→            'transition: background-color 0.15s ease, transform 0.08s ease, opacity 0.15s ease',
+    83→    83→            'white-space: nowrap'
+    84→    84→        ].join(';') + ';';
+    85→    85→
+    86→    86→        btn.addEventListener('mouseenter', () => {
+    87→    87→            if (btn.disabled) return;
+    88→    88→            btn.style.background = hoverBg;
+    89→    89→        });
+    90→    90→        btn.addEventListener('mouseleave', () => {
+    91→    91→            if (btn.disabled) return;
+    92→    92→            btn.style.background = baseBg;
+    93→    93→            btn.style.transform = '';
+    94→    94→        });
+    95→    95→        btn.addEventListener('mousedown', () => {
+    96→    96→            if (!btn.disabled) btn.style.transform = 'translateY(1px)';
+    97→    97→        });
+    98→    98→        btn.addEventListener('mouseup', () => {
+    99→    99→            btn.style.transform = '';
+   100→   100→        });
+   101→   101→    }
+   102→   102→
+   103→   103→    // =========================================================================
+   104→   104→    //  Бейдж часов — рисуется прямо на canvas после захвата
+   105→   105→    // =========================================================================
+   106→   106→
+   107→   107→    // Html2canvas не умеет рендерить двухуровневый layout (🌍 над MSK) внутри
+   108→   108→    // одного inline-элемента — flex, table, block-внутри-inline-block, <br>
+   109→   109→    // с white-space:pre — всё игнорируется, бейдж получается пустым.
+   110→   110→    // Поэтому бейдж рисуем сами, через ctx.fillText, ПОСЛЕ захвата canvas.
+   111→   111→    //
+   112→   112→    // Layout (всё на одной строке, 🌍 над MSK как дробь, MSK меньше):
+   113→   113→    //   ┌──────────────────────────────────────┐
+   114→   114→    //   │ 03:55:04 31.10.26    │   🌍   │      │
+   115→   115→    //   │                      │  MSK   │      │
+   116→   116→    //   └──────────────────────────────────────┘
+   117→   117→    function drawClockStampOnCanvas(ctx, scale, targetRect, h2Rect) {
+   118→   118→        const msk = getMoscowDate();
+   119→   119→        const timeStr = `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
+   120→   120→        const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${String(msk.getFullYear()).slice(-2)}`;
+   121→   121→
+   122→   122→        // Размеры шрифтов (в canvas пикселях)
+   123→   123→        const mainFont = Math.max(20, 28 * scale);
+   124→   124→        const iconFont = Math.max(14, 18 * scale);
+   125→   125→        const mskFont = Math.max(11, 14 * scale);   // MSK меньше основного шрифта
+   126→   126→
+   127→   127→        const mainText = `${timeStr} ${dateStr}`;
+   128→   128→        const iconChar = '\u{1F30D}\u{FE0E}';   // 🌍 + U+FE0E (монохромная)
+   129→   129→
+   130→   130→        // Замеры
+   131→   131→        ctx.font = `${mainFont}px Arial`;
+   132→   132→        const mainW = ctx.measureText(mainText).width;
+   133→   133→
+   134→   134→        ctx.font = `${iconFont}px Arial`;
+   135→   135→        const iconW = ctx.measureText(iconChar).width;
+   136→   136→
+   137→   137→        ctx.font = `${mskFont}px Arial`;
+   138→   138→        const mskW = ctx.measureText('MSK').width;
+   139→   139→
+   140→   140→        // Layout бокса
+   141→   141→        const boxPad = 5 * scale;
+   142→   142→        const gap = 6 * scale;          // между mainText и правой колонкой
+   143→   143→        const smallGap = 1 * scale;     // между 🌍 и MSK
+   144→   144→        const rightColW = Math.max(iconW, mskW);
+   145→   145→        const rightColH = iconFont + smallGap + mskFont;
+   146→   146→        const contentH = Math.max(mainFont, rightColH);
+   147→   147→
+   148→   148→        const boxW = boxPad + mainW + gap + rightColW + boxPad;
+   149→   149→        const boxH = boxPad + contentH + boxPad;
+   150→   150→
+   151→   151→        // Бейдж рядом с текстом «История» — справа от <a> внутри h2.
+   152→   152→        // Вертикально — по центру h2.
+   153→   153→        let boxX, boxY;
+   154→   154→        if (h2Rect) {
+   155→   155→            const h2RightOnCanvas = (h2Rect.right - targetRect.left) * scale;
+   156→   156→            const h2CenterYOnCanvas = ((h2Rect.top + h2Rect.bottom) / 2 - targetRect.top) * scale;
+   157→   157→            boxX = h2RightOnCanvas + 8 * scale;
+   158→   158→            boxY = h2CenterYOnCanvas - boxH / 2;
+   159→   159→        } else {
+   160→   160→            boxX = ctx.canvas.width - boxW - 10 * scale;
+   161→   161→            boxY = 10 * scale;
+   162→   162→        }
+   163→   163→
+   164→   164→        console.info('[CatWar Screenshot] drawClockStampOnCanvas:', {
+   165→   165→            canvasW: ctx.canvas.width,
+   166→   166→            canvasH: ctx.canvas.height,
+   167→   167→            boxX: boxX,
+   168→   168→            boxY: boxY,
+   169→   169→            boxW: boxW,
+   170→   170→            boxH: boxH,
+   171→   171→            mainW: mainW,
+   172→   172→            iconW: iconW,
+   173→   173→            mskW: mskW,
+   174→   174→            scale: scale,
+   175→   175→            h2Rect: h2Rect ? 'yes' : 'null'
+   176→   176→        });
+   177→   177→
+   178→   178→        // Заливка фона со скруглёнными углами
+   179→   179→        const r = Math.min(10 * scale, boxW / 2, boxH / 2);
+   180→   180→        ctx.fillStyle = CLOCK_BG;
+   181→   181→        ctx.beginPath();
+   182→   182→        ctx.moveTo(boxX + r, boxY);
+   183→   183→        ctx.lineTo(boxX + boxW - r, boxY);
+   184→   184→        ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + r);
+   185→   185→        ctx.lineTo(boxX + boxW, boxY + boxH - r);
+   186→   186→        ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - r, boxY + boxH);
+   187→   187→        ctx.lineTo(boxX + r, boxY + boxH);
+   188→   188→        ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - r);
+   189→   189→        ctx.lineTo(boxX, boxY + r);
+   190→   190→        ctx.quadraticCurveTo(boxX, boxY, boxX + r, boxY);
+   191→   191→        ctx.closePath();
+   192→   192→        ctx.fill();
+   193→   193→
+   194→   194→        // Текст: чёрный
+   195→   195→        ctx.fillStyle = CLOCK_TEXT;
+   196→   196→
+   197→   197→        const contentTop = boxY + boxPad;
+   198→   198→        const contentCenterY = contentTop + contentH / 2;
+   199→   199→
+   200→   200→        // Левая часть: время + дата (слева бейджа)
+   201→   201→        ctx.textBaseline = 'middle';
+   202→   202→        ctx.textAlign = 'left';
+   203→   203→        ctx.font = `${mainFont}px Arial`;
+   204→   204→        ctx.fillText(mainText, boxX + boxPad, contentCenterY);
+   205→   205→
+   206→   206→        // Правая колонка: 🌍 сверху, MSK снизу (справа бейджа)
+   207→   207→        const rightColX = boxX + boxPad + mainW + gap;
+   208→   208→        const rightColCenterX = rightColX + rightColW / 2;
+   209→   209→        const rightColTop = contentTop + (contentH - rightColH) / 2;
+   210→   210→
+   211→   211→        // 🌍 (числитель)
+   212→   212→        ctx.textAlign = 'center';
+   213→   213→        ctx.font = `${iconFont}px Arial`;
+   214→   214→        ctx.fillText(iconChar, rightColCenterX, rightColTop + iconFont / 2);
+   215→   215→
+   216→   216→        // MSK (знаменатель, меньше)
+   217→   217→        ctx.font = `${mskFont}px Arial`;
+   218→   218→        ctx.fillText('MSK', rightColCenterX, rightColTop + iconFont + smallGap + mskFont / 2);
+   219→   219→
+   220→   220→        // Восстанавливаем ctx
+   221→   221→        ctx.textAlign = 'left';
+   222→   222→        ctx.textBaseline = 'alphabetic';
+   223→   223→    }
+   224→   224→
+   225→   225→    // =========================================================================
+   226→   226→    //  Санирование современных CSS color-функций
+   227→   227→    // =========================================================================
+   228→   228→
+   229→   229→    // html2canvas не умеет парсить color(), oklch(), oklab(), lab(), lch(), hwb().
+   230→   230→    // Пробегаем по всем элементам внутри td#history, и если в computed style
+   231→   231→    // какого-то цветового свойства есть такая функция — подменяем inline-стилем
+   232→   232→    // на безопасный цвет. После захвата — восстанавливаем.
+   233→   233→    const UNSUPPORTED_COLOR_FUNCS = ['color(', 'oklch(', 'oklab(', 'lab(', 'lch(', 'hwb('];
+   234→   234→
+   235→   235→    const COLOR_PROPS_KEBAB = [
+   236→   236→        'background-color',
+   237→   237→        'color',
+   238→   238→        'border-top-color',
+   239→   239→        'border-right-color',
+   240→   240→        'border-bottom-color',
+   241→   241→        'border-left-color',
+   242→   242→        'border-color',
+   243→   243→        'outline-color',
+   244→   244→        'text-decoration-color',
+   245→   245→        'fill',
+   246→   246→        'stroke',
+   247→   247→        'box-shadow',
+   248→   248→        'caret-color'
+   249→   249→    ];
+   250→   250→
+   251→   251→    // =========================================================================
+   252→   252→    //  Санирование клонированного документа (через onclone html2canvas)
+   253→   253→    // =========================================================================
+   254→   254→
+   255→   255→    // В клонированном документе Multi-Find не активен (его JS не работает
+   256→   256→    // в клоне), поэтому безопасно можно:
+   257→   257→    //   1. Заменить <multi-find-1-extension> на набор <span> по одному на
+   258→   258→    //      каждое слово (display: inline-block) + <span> с пробелами между
+   259→   259→    //      ними (display: inline-block, transparent). Иначе html2canvas
+   260→   260→    //      рендерит подряд идущие inline-span с одинаковым фоном как один
+   261→   261→    //      сплошной блок — подсветка «слипается».
+   262→   262→    //   2. Санировать color()/oklch()/oklab()/lab()/lch()/hwb() в computed
+   263→   263→    //      стилях — html2canvas их не умеет парсить и падает.
+   264→   264→    function sanitizeClone(clonedDoc, rootEl) {
+   265→   265→        const win = clonedDoc.defaultView;
+   266→   266→        let replacedCount = 0;
+   267→   267→
+   268→   268→        // --- 1. Замена multi-find-extension на набор слов в inline-block ---
+   269→   269→        const mfeTargets = Array.from(rootEl.querySelectorAll('multi-find-1-extension'));
+   270→   270→        mfeTargets.forEach(original => {
+   271→   271→            let inlineBg = original.style.backgroundColor;
+   272→   272→            let inlineColor = original.style.color;
+   273→   273→
+   274→   274→            // Если инлайн-стиля нет — берём из computed
+   275→   275→            if ((!inlineBg || !inlineColor) && win) {
+   276→   276→                try {
+   277→   277→                    const cs = win.getComputedStyle(original);
+   278→   278→                    if (!inlineBg) inlineBg = cs.backgroundColor;
+   279→   279→                    if (!inlineColor) inlineColor = cs.color;
+   280→   280→                } catch (e) {}
+   281→   281→            }
+   282→   282→
+   283→   283→            // inline-block: имеет явную ширину по содержимому, не растягивается
+   284→   284→            // на всю строку и не сливается с соседями.
+   285→   285→            const wordCss =
+   286→   286→                `background-color: ${inlineBg || 'transparent'}; ` +
+   287→   287→                `color: ${inlineColor || 'inherit'}; ` +
+   288→   288→                `display: inline-block; ` +
+   289→   289→                `padding: 0; ` +
+   290→   290→                `margin: 0; ` +
+   291→   291→                `line-height: inherit;`;
+   292→   292→
+   293→   293→            // Пробелы — отдельный span с transparent фоном и inline-block,
+   294→   294→            // чтобы html2canvas точно видел разделитель между подсвеченными
+   295→   295→            // словами (text node может рендериться с нулевой шириной).
+   296→   296→            const spaceCss =
+   297→   297→                `display: inline-block; ` +
+   298→   298→                `background: transparent;`;
+   299→   299→
+   300→   300→            const fragment = clonedDoc.createDocumentFragment();
+   301→   301→            const text = original.textContent || '';
+   302→   302→            const parts = text.split(/(\s+)/);
+   303→   303→            parts.forEach(part => {
+   304→   304→                if (!part) return;
+   305→   305→                if (/^\s+$/.test(part)) {
+   306→   306→                    const spaceSpan = clonedDoc.createElement('span');
+   307→   307→                    spaceSpan.style.cssText = spaceCss;
+   308→   308→                    spaceSpan.textContent = part;
+   309→   309→                    fragment.appendChild(spaceSpan);
+   310→   310→                } else {
+   311→   311→                    const span = clonedDoc.createElement('span');
+   312→   312→                    span.style.cssText = wordCss;
+   313→   313→                    span.textContent = part;
+   314→   314→                    fragment.appendChild(span);
+   315→   315→                }
+   316→   316→            });
+   317→   317→
+   318→   318→            if (original.parentNode) {
+   319→   319→                original.parentNode.replaceChild(fragment, original);
+   320→   320→                replacedCount++;
+   321→   321→            }
+   322→   322→        });
+   323→   323→
+   324→   324→        console.info('[CatWar Screenshot] sanitizeClone: заменено ' + replacedCount + ' multi-find элементов');
+   325→   325→
+   326→   326→        // --- 1b. Подменяем фон td#history на непрозрачный rgb(107,86,88) ---
+   327→   327→        // В CSS игры фон задан как rgba(...,0.7), html2canvas рендерит поверх
+   328→   328→        // белого и получает светлый rgb(172,158,162). Подменяем на непрозрачный
+   329→   329→        // тёмный, как в игре.
+   330→   330→        rootEl.style.setProperty('background-color', TARGET_BG_COLOR, 'important');
+   331→   331→
+   332→   332→        // --- 2. Санирование color-функций ---
+   333→   333→        if (!win) return;
+   334→   334→        const elements = [rootEl, ...rootEl.querySelectorAll('*')];
+   335→   335→        elements.forEach(el => {
+   336→   336→            let cs;
+   337→   337→            try { cs = win.getComputedStyle(el); } catch (e) { return; }
+   338→   338→
+   339→   339→            COLOR_PROPS_KEBAB.forEach(prop => {
+   340→   340→                let val;
+   341→   341→                try { val = cs.getPropertyValue(prop); } catch (e) { return; }
+   342→   342→                if (!val) return;
+   343→   343→                const lower = val.toLowerCase();
+   344→   344→                if (!UNSUPPORTED_COLOR_FUNCS.some(p => lower.includes(p))) return;
+   345→   345→
+   346→   346→                let safe;
+   347→   347→                if (prop === 'background-color') {
+   348→   348→                    safe = 'rgba(184, 170, 170, 0.55)';
+   349→   349→                } else if (prop === 'box-shadow') {
+   350→   350→                    safe = 'none';
+   351→   351→                } else {
+   352→   352→                    safe = CLOCK_BG;
+   353→   353→                }
+   354→   354→                el.style.setProperty(prop, safe, 'important');
+   355→   355→            });
+   356→   356→        });
+   357→   357→    }
+   358→   358→
+   359→   359→    // =========================================================================
+   360→   360→    //  Скачивание
+   361→   361→    // =========================================================================
+   362→   362→
+   363→   363→    function downloadCanvas(canvas, modeSlug) {
+   364→   364→        const msk = getMoscowDate();
+   365→   365→        const stamp =
+   366→   366→            `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${msk.getFullYear()}_` +
+   367→   367→            `${pad(msk.getHours())}-${pad(msk.getMinutes())}-${pad(msk.getSeconds())}`;
+   368→   368→        const filename = `история_${modeSlug}_${stamp}_МСК.png`;
+   369→   369→
+   370→   370→        canvas.toBlob(function (blob) {
+   371→   371→            if (!blob) {
+   372→   372→                alert('Не удалось собрать PNG (canvas пустой).');
+   373→   373→                return;
+   374→   374→            }
+   375→   375→            const url = URL.createObjectURL(blob);
+   376→   376→            const a = document.createElement('a');
+   377→   377→            a.href = url;
+   378→   378→            a.download = filename;
+   379→   379→            document.body.appendChild(a);
+   380→   380→            a.click();
+   381→   381→            document.body.removeChild(a);
+   382→   382→            setTimeout(() => URL.revokeObjectURL(url), 2000);
+   383→   383→        }, 'image/png');
+   384→   384→    }
+   385→   385→
+   386→   386→    // =========================================================================
+   387→   387→    //  Захват
+   388→   388→    // =========================================================================
+   389→   389→
+   390→   390→    function takeScreenshot(btn, mode) {
+   391→   391→        const target =
+   392→   392→            document.querySelector('td#history') ||
+   393→   393→            document.querySelector('#history');
+   394→   394→
+   395→   395→        if (!target) {
+   396→   396→            alert('Блок «История» не найден на странице.');
+   397→   397→            return;
+   398→   398→        }
+   399→   399→
+   400→   400→        if (typeof window.html2canvas !== 'function') {
+   401→   401→            alert('Не удалось загрузить html2canvas. Проверьте интернет и обновите страницу.');
+   402→   402→            return;
+   403→   403→        }
+   404→   404→
+   405→   405→        const originalLabel = btn.textContent;
+   406→   406→        const originalDisabled = btn.disabled;
+   407→   407→        btn.disabled = true;
+   408→   408→        btn.textContent = '⏳ Делаю скриншот…';
+   409→   409→
+   410→   410→        const scale = Math.min(window.devicePixelRatio || 1.5, 2);
+   411→   411→
+   412→   412→        // 1. Прячем группу кнопок 📲/👁 — на скрине в заголовке будут только
+   413→   413→        //    «История» и бейдж часов (бейдж рисуем на canvas после захвата).
+   414→   414→        const group = document.getElementById(GROUP_ID) ||
+   415→   415→                      document.getElementById(GROUP_ID_FLAT);
+   416→   416→        const savedGroupDisplay = group ? group.style.display : null;
+   417→   417→        if (group) group.style.display = 'none';
+   418→   418→
+   419→   419→        // 2. Замеряем видимые размеры ДО раскрытия (для visible режима и
+   420→   420→        //    для позиционирования бейджа относительно h2)
+   421→   421→        const historyBlock = target.querySelector('#history_block');
+   422→   422→        const h2El = target.querySelector('h2');
+   423→   423→        // Для бейджа ищем <a> внутри h2 (текст «История») — h2 это block,
+   424→   424→        // его right = правому краю td#history, места для бейджа справа нет.
+   425→   425→        // <a> узкий, справа от него есть место.
+   426→   426→        const h2Link = h2El ? h2El.querySelector('a') : null;
+   427→   427→
+   428→   428→        const targetRect = target.getBoundingClientRect();
+   429→   429→        const h2FullRect = h2El ? h2El.getBoundingClientRect() : null;
+   430→   430→        const h2LinkRect = h2Link ? h2Link.getBoundingClientRect() : h2FullRect;
+   431→   431→
+   432→   432→        const visibleClientHeight = targetRect.height;
+   433→   433→        // Для обрезки visible — используем h2FullRect (весь h2)
+   434→   434→        const h2OffsetInTarget = h2FullRect ? (h2FullRect.top - targetRect.top) : 0;
+   435→   435→        const h2Height = h2FullRect ? h2FullRect.height : 0;
+   436→   436→        const scrollTop = historyBlock ? historyBlock.scrollTop : 0;
+   437→   437→
+   438→   438→        // 4. ВСЕГДА раскрываем #history_block — и для full, и для visible.
+   439→   439→        //    Иначе html2canvas рендерит #history_block со скроллом, и
+   440→   440→        //    multi-find-extension, которые частично срезаны скроллом,
+   441→   441→        //    рендерятся с растянутой подсветкой (мазня).
+   442→   442→        let savedBlockStyles = null;
+   443→   443→        if (historyBlock) {
+   444→   444→            savedBlockStyles = {
+   445→   445→                height: historyBlock.style.height,
+   446→   446→                maxHeight: historyBlock.style.maxHeight,
+   447→   447→                overflow: historyBlock.style.overflow,
+   448→   448→                overflowY: historyBlock.style.overflowY,
+   449→   449→                overflowX: historyBlock.style.overflowX,
+   450→   450→                resize: historyBlock.style.resize
+   451→   451→            };
+   452→   452→            historyBlock.style.height = 'auto';
+   453→   453→            historyBlock.style.maxHeight = 'none';
+   454→   454→            historyBlock.style.overflow = 'visible';
+   455→   455→            historyBlock.style.overflowY = 'visible';
+   456→   456→            historyBlock.style.overflowX = 'visible';
+   457→   457→            historyBlock.style.resize = 'none';
+   458→   458→            void historyBlock.offsetHeight;
+   459→   459→        }
+   460→   460→
+   461→   461→        // 5. Замеряем размеры ПОСЛЕ раскрытия
+   462→   462→        const captureWidth = target.scrollWidth || target.offsetWidth;
+   463→   463→        const captureHeight = target.offsetHeight;
+   464→   464→
+   465→   465→        // Санирование (замена multi-find на span + color-функции) делаем в
+   466→   466→        // onclone — то есть в уже клонированном документе, где Multi-Find
+   467→   467→        // не активен и не сможет вернуть свои custom elements обратно.
+   468→   468→        const baseOptions = {
+   469→   469→            backgroundColor: '#ffffff',
+   470→   470→            scale: scale,
+   471→   471→            useCORS: true,
+   472→   472→            allowTaint: true,
+   473→   473→            logging: false,
+   474→   474→            width: captureWidth,
+   475→   475→            height: captureHeight,
+   476→   476→            scrollX: 0,
+   477→   477→            scrollY: 0,
+   478→   478→            windowWidth: document.documentElement.clientWidth,
+   479→   479→            onclone: function (clonedDoc, element) {
+   480→   480→                const clonedTarget = element || clonedDoc.querySelector('td#history');
+   481→   481→                if (!clonedTarget) return;
+   482→   482→                try { sanitizeClone(clonedDoc, clonedTarget); } catch (e) {
+   483→   483→                    console.warn('[CatWar Screenshot] sanitizeClone упал:', e);
+   484→   484→                }
+   485→   485→            }
+   486→   486→        };
+   487→   487→
+   488→   488→        function cleanup() {
+   489→   489→            // 1. Восстанавливаем #history_block
+   490→   490→            if (savedBlockStyles && historyBlock) {
+   491→   491→                historyBlock.style.height = savedBlockStyles.height;
+   492→   492→                historyBlock.style.maxHeight = savedBlockStyles.maxHeight;
+   493→   493→                historyBlock.style.overflow = savedBlockStyles.overflow;
+   494→   494→                historyBlock.style.overflowY = savedBlockStyles.overflowY;
+   495→   495→                historyBlock.style.overflowX = savedBlockStyles.overflowX;
+   496→   496→                historyBlock.style.resize = savedBlockStyles.resize;
+   497→   497→            }
+   498→   498→            // 2. Восстанавливаем видимость группы кнопок
+   499→   499→            //    (бейдж часов не в DOM — рисуется на canvas, восстанавливать нечего)
+   500→   500→            if (group) group.style.display = savedGroupDisplay;
+   501→   501→        }
+   502→   502→
+   503→   503→        function finalize(rawCanvas) {
+   504→   504→            cleanup();
+   505→   505→
+   506→   506→            // Для visible режима — обрезаем canvas до видимой области.
+   507→   507→            // После раскрытия canvas содержит полный td#history: padding.top +
+   508→   508→            // h2 + полная #history_block (без скролла).
+   509→   509→            // Хотим показать: padding.top + h2 + видимую часть #history_block
+   510→   510→            // (с учётом scrollTop).
+   511→   511→            let finalCanvas = rawCanvas;
+   512→   512→            if (mode === 'visible') {
+   513→   513→                try {
+   514→   514→                    const s = scale;
+   515→   515→                    const upperEnd = Math.round((h2OffsetInTarget + h2Height) * s);
+   516→   516→                    const histSrcY = Math.round((h2OffsetInTarget + h2Height + scrollTop) * s);
+   517→   517→                    const histSrcH = Math.max(0, Math.round((visibleClientHeight - h2OffsetInTarget - h2Height) * s));
+   518→   518→
+   519→   519→                    const newCanvas = document.createElement('canvas');
+   520→   520→                    newCanvas.width = rawCanvas.width;
+   521→   521→                    newCanvas.height = Math.round(visibleClientHeight * s);
+   522→   522→                    const ctx = newCanvas.getContext('2d');
+   523→   523→
+   524→   524→                    ctx.fillStyle = '#ffffff';
+   525→   525→                    ctx.fillRect(0, 0, newCanvas.width, newCanvas.height);
+   526→   526→
+   527→   527→                    if (upperEnd > 0) {
+   528→   528→                        ctx.drawImage(rawCanvas,
+   529→   529→                            0, 0, rawCanvas.width, upperEnd,
+   530→   530→                            0, 0, rawCanvas.width, upperEnd);
+   531→   531→                    }
+   532→   532→
+   533→   533→                    if (histSrcH > 0) {
+   534→   534→                        ctx.drawImage(rawCanvas,
+   535→   535→                            0, histSrcY, rawCanvas.width, histSrcH,
+   536→   536→                            0, upperEnd, rawCanvas.width, histSrcH);
+   537→   537→                    }
+   538→   538→
+   539→   539→                    finalCanvas = newCanvas;
+   540→   540→                } catch (e) {
+   541→   541→                    console.warn('[CatWar Screenshot] Обрезка visible упала:', e);
+   542→   542→                }
+   543→   543→            } else {
+   544→   544→                // Для full режима — копируем rawCanvas на новый canvas,
+   545→   545→                // потому что fillText может не работать на canvas от html2canvas.
+   546→   546→                try {
+   547→   547→                    const copyCanvas = document.createElement('canvas');
+   548→   548→                    copyCanvas.width = rawCanvas.width;
+   549→   549→                    copyCanvas.height = rawCanvas.height;
+   550→   550→                    const copyCtx = copyCanvas.getContext('2d');
+   551→   551→                    copyCtx.drawImage(rawCanvas, 0, 0);
+   552→   552→                    finalCanvas = copyCanvas;
+   553→   553→                } catch (e) {
+   554→   554→                    console.warn('[CatWar Screenshot] Копирование full canvas упало:', e);
+   555→   555→                }
+   556→   556→            }
+   557→   557→
+   558→   558→            // Рисуем бейдж часов прямо на canvas (после обрезки для visible,
+   559→   559→            // или на rawCanvas для full). Html2canvas не умеет двухуровневый
+   560→   560→            // layout — поэтому рисуем сами через ctx.fillText.
+   561→   561→            // Позиция — справа от текста «История» (<a> внутри h2).
+   562→   562→            try {
+   563→   563→                const finalCtx = finalCanvas.getContext('2d');
+   564→   564→                drawClockStampOnCanvas(finalCtx, scale, targetRect, h2LinkRect);
+   565→   565→            } catch (e) {
+   566→   566→                console.warn('[CatWar Screenshot] drawClockStampOnCanvas упал:', e);
+   567→   567→            }
+   568→   568→
+   569→   569→            downloadCanvas(finalCanvas, mode === 'visible' ? 'видимое' : 'полная');
+   570→   570→
+   571→   571→            btn.textContent = '✅ Сохранено!';
+   572→   572→            setTimeout(() => {
+   573→   573→                btn.textContent = originalLabel;
+   574→   574→                btn.disabled = originalDisabled;
+   575→   575→            }, 1500);
+   576→   576→        }
+   577→   577→
+   578→   578→        function fail(err) {
+   579→   579→            cleanup();
+   580→   580→            console.error('[CatWar Screenshot] Ошибка:', err);
+   581→   581→            alert('Не удалось сделать скриншот:\n' + (err && err.message ? err.message : err));
+   582→   582→            btn.textContent = originalLabel;
+   583→   583→            btn.disabled = originalDisabled;
+   584→   584→        }
+   585→   585→
+   586→   586→        window.html2canvas(target, baseOptions)
+   587→   587→            .then(finalize)
+   588→   588→            .catch(function (err1) {
+   589→   589→                console.warn('[CatWar Screenshot] Первый прогон упал, пробую без allowTaint:', err1);
+   590→   590→                const opts2 = Object.assign({}, baseOptions, { allowTaint: false });
+   591→   591→                window.html2canvas(target, opts2)
+   592→   592→                    .then(finalize)
+   593→   593→                    .catch(fail);
+   594→   594→            });
+   595→   595→    }
+   596→   596→
+   597→   597→    // =========================================================================
+   598→   598→    //  Группа кнопок
+   599→   599→    // =========================================================================
+   600→   600→
+   601→   601→    function buildGroup() {
+   602→   602→        const group = document.createElement('span');
+   603→   603→        group.id = GROUP_ID;
+   604→   604→        group.style.cssText = 'display: inline-flex; align-items: center; gap: 0; margin-left: 10px; vertical-align: middle;';
+   605→   605→
+   606→   606→        const btnFull = document.createElement('button');
+   607→   607→        btnFull.type = 'button';
+   608→   608→        btnFull.textContent = '📸 Вся история';
+   609→   609→        btnFull.title = 'Сохранить скриншот ВСЕЙ истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «время дата MSK» по МСК.';
+   610→   610→        styleButton(btnFull, 'primary');
+   611→   611→        btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
+   612→   612→
+   613→   613→        const btnVisible = document.createElement('button');
+   614→   614→        btnVisible.type = 'button';
+   615→   615→        btnVisible.textContent = '👁 Видимое';
+   616→   616→        btnVisible.title = 'Сохранить скриншот только видимой части истории (с заголовком). Кнопки 📲/👁 на скрине спрячутся, рядом с заголовком «История» будет бейдж «время дата MSK» по МСК.';
+   617→   617→        styleButton(btnVisible, 'secondary');
+   618→   618→        btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
+   619→   619→
+   620→   620→        group.appendChild(btnFull);
+   621→   621→        group.appendChild(btnVisible);
+   622→   622→        return group;
+   623→   623→    }
+   624→   624→
+   625→   625→    function ensureButton() {
+   626→   626→        if (document.getElementById(GROUP_ID) || document.getElementById(GROUP_ID_FLAT)) return;
+   627→   627→
+   628→   628→        const historyTd = document.querySelector('td#history');
+   629→   629→        if (historyTd) {
+   630→   630→            const h2 = historyTd.querySelector('h2');
+   631→   631→            if (h2 && !h2.querySelector('#' + GROUP_ID)) {
+   632→   632→                h2.appendChild(buildGroup());
+   633→   633→                return;
+   634→   634→            }
+   635→   635→        }
+   636→   636→
+   637→   637→        const historyBlock = document.querySelector('#history_block');
+   638→   638→        if (historyBlock && !historyBlock.querySelector('#' + GROUP_ID_FLAT)) {
+   639→   639→            const wrapper = document.createElement('div');
+   640→   640→            wrapper.style.cssText = 'margin: 0 0 6px 0; text-align: right;';
+   641→   641→            const g = buildGroup();
+   642→   642→            g.id = GROUP_ID_FLAT;
+   643→   643→            wrapper.appendChild(g);
+   644→   644→            historyBlock.insertBefore(wrapper, historyBlock.firstChild);
+   645→   645→        }
+   646→   646→    }
+   647→   647→
+   648→   648→    // =========================================================================
+   649→   649→    //  Инициализация
+   650→   650→    // =========================================================================
+   651→   651→
+   652→   652→    waitForElement('#history_block', ensureButton);
+   653→   653→    waitForElement('td#history', ensureButton);
+   654→   654→
+   655→   655→    const observerTarget = document.getElementById('app') || document.body;
+   656→   656→    const observer = new MutationObserver(function () {
+   657→   657→        if (!document.getElementById(GROUP_ID) && !document.getElementById(GROUP_ID_FLAT)) {
+   658→   658→            ensureButton();
+   659→   659→        }
+   660→   660→    });
+   661→   661→    observer.observe(observerTarget, { childList: true, subtree: true });
+   662→   662→
+   663→   663→    setInterval(function () {
+   664→   664→        if (!document.getElementById(GROUP_ID) && !document.getElementById(GROUP_ID_FLAT)) {
+   665→   665→            ensureButton();
+   666→   666→        }
+   667→   667→    }, 2000);
+   668→   668→})();
+   669→   669→
