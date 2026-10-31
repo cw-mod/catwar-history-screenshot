@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      10.2
+// @version      10.3
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -138,15 +138,15 @@
         const mskW = ctx.measureText('MSK').width;
 
         // Layout бокса
-        const pad = 5 * scale;
+        const boxPad = 5 * scale;
         const gap = 6 * scale;          // между mainText и правой колонкой
         const smallGap = 1 * scale;     // между 🌍 и MSK
         const rightColW = Math.max(iconW, mskW);
         const rightColH = iconFont + smallGap + mskFont;
         const contentH = Math.max(mainFont, rightColH);
 
-        const boxW = pad + mainW + gap + rightColW + pad;
-        const boxH = pad + contentH + pad;
+        const boxW = boxPad + mainW + gap + rightColW + boxPad;
+        const boxH = boxPad + contentH + boxPad;
 
         // Позиция: справа от текста «История», вертикально по центру h2.
         // Если h2Rect есть — используем его. Иначе — правый верхний угол canvas.
@@ -194,17 +194,17 @@
         // Текст: чёрный
         ctx.fillStyle = CLOCK_TEXT;
 
-        const contentTop = boxY + pad;
+        const contentTop = boxY + boxPad;
         const contentCenterY = contentTop + contentH / 2;
 
         // Левая часть: время + дата (вертикально по центру)
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
         ctx.font = `${mainFont}px Arial, "Segoe UI", sans-serif`;
-        ctx.fillText(mainText, boxX + pad, contentCenterY);
+        ctx.fillText(mainText, boxX + boxPad, contentCenterY);
 
         // Правая колонка: 🌍 сверху, MSK снизу (как дробь)
-        const rightColX = boxX + pad + mainW + gap;
+        const rightColX = boxX + boxPad + mainW + gap;
         const rightColCenterX = rightColX + rightColW / 2;
         const rightColTop = contentTop + (contentH - rightColH) / 2;
 
