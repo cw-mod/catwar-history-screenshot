@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      8.3
+// @version      8.4
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «🌍︎ 02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный, иконка монохромная через U+FE0E). Фон td#history подменяется на rgb(107,86,88) — как в игре, а не светлый из-за композита поверх белого. #history_block ВСЕГДА раскрывается, для visible canvas обрезается с учётом scrollTop. В onclone: multi-find-элементы разбиваются на слова в <span inline-block>, color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -123,40 +123,50 @@
             'color: ' + CLOCK_TEXT,
             'border-radius: 10px',
             'vertical-align: middle',
-            'white-space: nowrap',
-            'display: inline-block',  // ← inline-block вместо inline-flex
+            'display: inline-block',
             'user-select: none'
         ].join(';') + ';';
 
-        // Левая часть: время + дата (inline-block, вертикально по центру)
-        const timeDateSpan = document.createElement('span');
-        timeDateSpan.textContent = `${timeStr} ${dateStr}`;
-        timeDateSpan.style.cssText = 'display: inline-block; vertical-align: middle;';
+        // Используем таблицу — html2canvas надёжно рендерит таблицы,
+        // в отличие от flex/grid/block-внутри-inline-block.
+        //
+        // Layout:
+        //   | 03:45:58 31.10.26 (rowspan=2) | 🌍 |
+        //   |                               | MSK |
+        const table = document.createElement('table');
+        table.style.cssText =
+            'display: inline-table; border-collapse: collapse; vertical-align: middle;';
 
-        // Разделитель (8px отступ) — inline-block с фиксированной шириной
-        const gapSpan = document.createElement('span');
-        gapSpan.style.cssText = 'display: inline-block; width: 8px;';
+        // Первая строка: время+дата (с rowspan=2) и иконка 🌍
+        const tr1 = document.createElement('tr');
 
-        // Правая часть: иконка 🌍 над MSK (в столбец через display:block внутри)
-        const iconMskSpan = document.createElement('span');
-        iconMskSpan.style.cssText =
-            'display: inline-block; vertical-align: middle; text-align: center; line-height: 1.2;';
+        const tdTimeDate = document.createElement('td');
+        tdTimeDate.rowSpan = 2;
+        tdTimeDate.style.cssText =
+            'vertical-align: middle; padding-right: 8px; white-space: nowrap;';
+        tdTimeDate.textContent = `${timeStr} ${dateStr}`;
 
-        const iconSpan = document.createElement('span');
+        const tdIcon = document.createElement('td');
+        tdIcon.style.cssText = 'text-align: center; vertical-align: middle;';
         // 🌍 + U+FE0E (variation selector) — монохромная иконка глобуса, как в UwU
-        iconSpan.textContent = '\u{1F30D}\u{FE0E}';
-        iconSpan.style.cssText = 'display: block;';
+        tdIcon.textContent = '\u{1F30D}\u{FE0E}';
 
-        const mskSpan = document.createElement('span');
-        mskSpan.textContent = 'MSK';
-        mskSpan.style.cssText = 'display: block; font-size: 0.7em; margin-top: 2px;';
+        tr1.appendChild(tdTimeDate);
+        tr1.appendChild(tdIcon);
 
-        iconMskSpan.appendChild(iconSpan);
-        iconMskSpan.appendChild(mskSpan);
+        // Вторая строка: MSK (под иконкой)
+        const tr2 = document.createElement('tr');
 
-        span.appendChild(timeDateSpan);
-        span.appendChild(gapSpan);
-        span.appendChild(iconMskSpan);
+        const tdMsk = document.createElement('td');
+        tdMsk.style.cssText =
+            'text-align: center; vertical-align: middle; font-size: 0.7em;';
+        tdMsk.textContent = 'MSK';
+
+        tr2.appendChild(tdMsk);
+
+        table.appendChild(tr1);
+        table.appendChild(tr2);
+        span.appendChild(table);
         return span;
     }
 
