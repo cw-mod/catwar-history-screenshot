@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.4.0
+// @version      1.0.0
 // @description  Скриншот истории CatWar с бейджем времени по МСК
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -384,7 +384,7 @@ function takeScreenshot(btn, mode) {
     isCapturing = false;
     btn.disabled = originalDisabled;
     btn.textContent = originalLabel;
-    alert('Видимая часть истории пуста. Прокрутите блок вниз или используйте режим «Вся история».');
+    alert('История пуста. Прокрутите блок вниз или используйте другую кнопку.');
     return;
   }
 
@@ -492,9 +492,9 @@ function takeScreenshot(btn, mode) {
 
     downloadCanvas(
       finalCanvas,
-      mode === 'visible' ? 'видимое' : 'полная',
+      mode === 'visible' ? 'vis' : 'full',
       function (filename) {
-        btn.textContent = '✅ Сохранено!';
+        btn.textContent = '✅';
         setTimeout(() => { btn.textContent = originalLabel; btn.disabled = originalDisabled; }, 1500);
       },
       function (errMsg) {
@@ -522,10 +522,10 @@ function buildGroup() {
   group.id = GROUP_ID;
   group.style.cssText = 'display: inline-flex; align-items: center; gap: 0; margin-left: 10px; vertical-align: middle;';
   const btnFull = document.createElement('button');
-  btnFull.type = 'button'; btnFull.textContent = '📸 Вся история'; btnFull.title = 'Скриншот всей истории.';
+  btnFull.type = 'button'; btnFull.textContent = '📸'; btnFull.title = 'Скриншот всей истории.';
   styleButton(btnFull, 'primary'); btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
   const btnVisible = document.createElement('button');
-  btnVisible.type = 'button'; btnVisible.textContent = '👁 Видимое'; btnVisible.title = 'Скриншот видимой части.';
+  btnVisible.type = 'button'; btnVisible.textContent = '👁'; btnVisible.title = 'Скриншот видимой части.';
   styleButton(btnVisible, 'secondary'); btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
   group.appendChild(btnFull); group.appendChild(btnVisible);
   return group;
