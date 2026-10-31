@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      10.3
+// @version      10.4
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -120,9 +120,9 @@
         const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${String(msk.getFullYear()).slice(-2)}`;
 
         // Размеры шрифтов (в canvas пикселях)
-        const mainFont = Math.max(11, 13 * scale);
-        const iconFont = Math.max(11, 13 * scale);
-        const mskFont = Math.max(9, 10 * scale);   // MSK меньше основного шрифта
+        const mainFont = Math.max(14, 16 * scale);
+        const iconFont = Math.max(14, 16 * scale);
+        const mskFont = Math.max(11, 12 * scale);   // MSK меньше основного шрифта
 
         const mainText = `${timeStr} ${dateStr}`;
         const iconChar = '\u{1F30D}\u{FE0E}';   // 🌍 + U+FE0E (монохромная)
