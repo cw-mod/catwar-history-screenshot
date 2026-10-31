@@ -504,7 +504,7 @@ function takeScreenshot(btn, mode) {
       finalCanvas,
       mode === 'visible' ? 'видимое' : 'полная',
       function (filename) {
-        btn.textContent = '✅ Сохранено!';
+        btn.textContent = '✅';
         setTimeout(() => { btn.textContent = originalLabel; btn.disabled = originalDisabled; }, 1500);
       },
       function (errMsg) {
