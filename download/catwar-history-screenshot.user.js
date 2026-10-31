@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      9.0
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «03:55:04 31.10.26 🌐 MSK» (rgb(184,170,170), без рамки, не жирный, иконка 🌐 монохромная через U+FE0E, всё в одну строку по образцу). Фон td#history подменяется на rgb(107,86,88) — как в игре. #history_block ВСЕГДА раскрывается, для visible canvas обрезается с учётом scrollTop. В onclone: multi-find-элементы разбиваются на слова в <span inline-block>, color()/oklch()/etc санируются.
+// @version      9.1
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «03:55:04 31.10.26 / 🌍 над MSK (как дробь)» (rgb(184,170,170), без рамки, не жирный, иконка 🌍 монохромная через U+FE0E). Фон td#history подменяется на rgb(107,86,88) — как в игре. #history_block ВСЕГДА раскрывается, для visible canvas обрезается с учётом scrollTop. В onclone: multi-find-элементы разбиваются на слова в <span inline-block>, color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -112,24 +112,34 @@
 
         const span = document.createElement('span');
         span.id = CLOCK_STAMP_ID;
-        // Одна строка по образцу:
-        //   03:55:04 31.10.26 🌐 MSK
-        // Иконка 🌐 (глобус с меридианами, U+1F310) + U+FE0E (variation selector,
-        // монохромная) — стоит перед MSK, в конце.
-        span.textContent = `${timeStr} ${dateStr} \u{1F310}\u{FE0E} MSK`;
+        // Layout «как дробь»: 🌍 над MSK (числитель над знаменателем),
+        // время+дата — на отдельной строке сверху, всё по центру.
+        //
+        //   03:55:04 31.10.26
+        //          🌍
+        //          MSK
+        //
+        // 🌍 + U+FE0E (variation selector, монохромная) — глобус с материками.
+        // MSK через <span> с font-size:0.7em — чутка меньше.
+        // <br> для переносов строк (html2canvas рендерит <br> надёжнее,
+        // чем \n с white-space:pre).
+        span.innerHTML =
+            `${timeStr} ${dateStr}` +
+            `<br>\u{1F30D}\u{FE0E}` +
+            `<br><span style="font-size:0.7em">MSK</span>`;
         span.style.cssText = [
             'margin-left: 10px',
-            'padding: 2px 10px',
+            'padding: 4px 10px',
             'font-family: Arial, "Segoe UI", sans-serif',
             'font-size: 0.9em',
             'font-weight: 400',
-            'line-height: 1.4',
+            'line-height: 1.3',
             'background: ' + CLOCK_BG,
             'color: ' + CLOCK_TEXT,
             'border-radius: 10px',
             'vertical-align: middle',
-            'white-space: nowrap',
             'display: inline-block',
+            'text-align: center',
             'user-select: none'
         ].join(';') + ';';
         return span;
