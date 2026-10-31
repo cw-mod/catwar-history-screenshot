@@ -1,0 +1,6 @@
+# Локальные папки, не должны попасть в репо
+download/
+skills/
+upload/
+node_modules/
+*.log
