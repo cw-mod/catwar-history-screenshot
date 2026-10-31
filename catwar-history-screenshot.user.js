@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.0.0
+// @version      1.4.0
 // @description  Скриншот истории CatWar с бейджем времени по МСК
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -25,18 +25,15 @@ const CLOCK_BG = 'rgb(184, 170, 170)';
 const CLOCK_TEXT = '#000000';
 const TARGET_BG_COLOR = 'rgb(107, 86, 88)';
 
-// Глобальный флаг захвата — защищает от параллельного запуска двух скриншотов,
-// который ломал восстановление стилей и swapMultiFind/restoreMultiFind.
+// Защита от параллельного запуска двух скриншотов.
 let isCapturing = false;
 
 // ===== Утилиты =====
 
+// Возвращает Date, у которого getHours()/getMinutes()/... дают московское время.
+// MSK = UTC+3 (без DST с 2014 года). Смещение через UTC-методы корректно работает
+// в любой локальной зоне пользователя.
 function getMoscowDate() {
-  // Возвращаем Date, у которого getHours()/getMinutes()/... дают московские значения.
-  // Берём UTC-момент и смещаем на +3 часа (MSK = UTC+3, без DST с 2014 года).
-  // Подход через Intl+formatToParts создаёт Date из «московских компонентов» в локальной
-  // зоне — это ломается при любом использовании getTime()/toISOString() и в не-UTC зонах.
-  // Смещение через UTC-методы даёт Date, чьи getHours/getDate корректно возвращают MSK.
   const now = new Date();
   return new Date(now.getTime() + (now.getTimezoneOffset() + 180) * 60000);
 }
@@ -102,14 +99,13 @@ function drawClockStampOnCanvas(ctx, scale, targetRect, h2Rect) {
   const boxH = boxPad + contentH + boxPad;
 
   let boxX, boxY;
-  // Естественная позиция — правее h2 (или link внутри h2).
+  // Естественная позиция — правее h2 (или ссылки внутри h2).
+  // Если не помещается — fallback в правый верхний угол canvas.
   if (h2Rect) {
     const h2RightOnCanvas = (h2Rect.right - targetRect.left) * scale;
     const h2CenterYOnCanvas = ((h2Rect.top + h2Rect.bottom) / 2 - targetRect.top) * scale;
     const naturalX = h2RightOnCanvas + 8 * scale;
     const naturalY = h2CenterYOnCanvas - boxH / 2;
-    // Если естественная позиция помещается — используем её.
-    // Если нет — fallback в правый верхний угол canvas (не сдвигаем на текст!).
     if (naturalX + boxW <= ctx.canvas.width && naturalX >= 0 &&
         naturalY >= 4 * scale && naturalY + boxH <= ctx.canvas.height - 4 * scale) {
       boxX = naturalX;
@@ -122,8 +118,7 @@ function drawClockStampOnCanvas(ctx, scale, targetRect, h2Rect) {
     boxX = ctx.canvas.width - boxW - 10 * scale;
     boxY = 10 * scale;
   }
-  // Финальная защита: если boxW больше canvas.width — всё равно рисуем,
-  // но прижимаем к левому краю с минимальным отступом.
+  // Защита от отрицательных/выходящих за canvas координат.
   if (boxX < 0) boxX = 4 * scale;
   if (boxX + boxW > ctx.canvas.width) boxX = Math.max(4 * scale, ctx.canvas.width - boxW - 4 * scale);
 
@@ -161,7 +156,11 @@ function drawClockStampOnCanvas(ctx, scale, targetRect, h2Rect) {
   ctx.textBaseline = 'alphabetic';
 }
 
-// ===== multi-find swap (для совместимости с расширением) =====
+// ===== Совместимость с расширением multi-find =====
+// Расширение подсветки поиска использует кастомный элемент <multi-find-1-extension>,
+// который html2canvas не умеет рендерить. Перед захватом заменяем его на <span>
+// с сохранением всех inline-стилей оригинала (display, padding, border-radius, box-shadow),
+// чтобы подсветка сохраняла прямоугольную форму. После захвата — восстанавливаем.
 
 function swapMultiFind(root) {
   const targets = Array.from(root.querySelectorAll('multi-find-1-extension'));
@@ -170,21 +169,15 @@ function swapMultiFind(root) {
     const parent = original.parentNode;
     const next = original.nextSibling;
     const span = document.createElement('span');
-    // Сохраняем ВСЕ inline-стили оригинала (display, padding, border-radius, box-shadow),
-    // а не только background-color и color. Иначе подсветка расплывается по строкам:
-    // оригинал мог быть display:inline-block с padding, что давало аккуратный прямоугольник.
     let inlineCss = original.style.cssText || '';
-    // Гарантируем видимые цвета: если inline не задан — берём из getComputedStyle,
-    // чтобы захватить стили из CSS-классов расширения.
+    // Берём цвета из getComputedStyle, чтобы захватить стили из CSS-классов расширения.
     const cs = getComputedStyle(original);
     const bg = original.style.backgroundColor || cs.backgroundColor || 'transparent';
     const color = original.style.color || cs.color || 'inherit';
-    // Если в inline-стиле не было display — ставим inline-block как безопасный дефолт
-    // (сохраняет прямоугольную форму подсветки на одной строке).
+    // Без display:inline-block подсветка расплывается по строкам.
     if (!/display\s*:/.test(inlineCss)) {
       inlineCss += (inlineCss && !/;\s*$/.test(inlineCss) ? ';' : '') + 'display:inline-block';
     }
-    // Явно прописываем цвета, чтобы sanitizeClone их увидел через [style].
     inlineCss += ';background-color:' + bg + ';color:' + color;
     span.style.cssText = inlineCss;
     span.textContent = original.textContent;
@@ -209,7 +202,9 @@ function restoreMultiFind(data) {
   });
 }
 
-// ===== Sanitize clone: убираем неподдерживаемые CSS color functions =====
+// ===== Sanitize clone =====
+// html2canvas не поддерживает современные CSS color functions (oklch, oklab, color(), ...).
+// В клоне документа заменяем их на безопасные значения, иначе рендер падает.
 
 const UNSUPPORTED_COLOR_FUNCS = ['color(', 'oklch(', 'oklab(', 'lab(', 'lch(', 'hwb('];
 const COLOR_PROPS_KEBAB = ['background-color','color','border-top-color','border-right-color','border-bottom-color','border-left-color','border-color','outline-color','text-decoration-color','fill','stroke','box-shadow','caret-color'];
@@ -218,11 +213,9 @@ function sanitizeClone(clonedDoc, rootEl) {
   const win = clonedDoc.defaultView;
   rootEl.style.setProperty('background-color', TARGET_BG_COLOR, 'important');
   if (!win) return;
-  // Оптимизация: проверяем только элементы с inline-стилем (style-атрибутом),
-  // а не все элементы дерева. getComputedStyle на тысячах узлов дорого.
+  // Проверяем только элементы с inline-стилем — getComputedStyle на тысячах узлов дорого.
   const candidates = [];
   if (rootEl.hasAttribute && rootEl.hasAttribute('style')) candidates.push(rootEl);
-  // querySelectorAll('style, [style]') — быстро, фильтрует по атрибуту, а не по дереву.
   candidates.push(...rootEl.querySelectorAll('[style]'));
   candidates.forEach(el => {
     let cs;
@@ -307,7 +300,7 @@ function downloadCanvas(canvas, modeSlug, onDone, onFail) {
       const saved = await saveBlobToDir(blob, filename);
       if (saved) { onDone(filename); return; }
     } catch (e) {}
-    // Fallback на обычный download.
+    // Fallback на обычный download, если File System Access API недоступен.
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename;
@@ -320,7 +313,7 @@ function downloadCanvas(canvas, modeSlug, onDone, onFail) {
 // ===== Главный обработчик =====
 
 function takeScreenshot(btn, mode) {
-  if (isCapturing) return; // защита от параллельного запуска
+  if (isCapturing) return;
   const target = document.querySelector('td#history') || document.querySelector('#history');
   if (!target) { alert('Блок «История» не найден.'); return; }
   if (typeof window.html2canvas !== 'function') { alert('html2canvas не загружен.'); return; }
@@ -350,6 +343,7 @@ function takeScreenshot(btn, mode) {
   const h2Height = h2FullRect ? h2FullRect.height : 0;
   const scrollTop = historyBlock ? historyBlock.scrollTop : 0;
 
+  // Снимаем ограничения прокрутки, чтобы захватить скрытую часть истории.
   let savedBlockStyles = null;
   if (historyBlock) {
     savedBlockStyles = {
@@ -375,9 +369,8 @@ function takeScreenshot(btn, mode) {
   const captureHeight = target.offsetHeight;
   const cropH = Math.min(effVisH, captureHeight);
 
-  // Проверка: в режиме 'visible' есть ли что захватывать, кроме заголовка?
+  // В режиме 'visible' проверяем, что есть что захватывать кроме заголовка.
   if (mode === 'visible' && cropH <= h2OffsetInTarget + h2Height) {
-    // Восстанавливаем состояние до alert.
     if (savedBlockStyles && historyBlock) {
       historyBlock.style.height = savedBlockStyles.height;
       historyBlock.style.maxHeight = savedBlockStyles.maxHeight;
@@ -399,7 +392,7 @@ function takeScreenshot(btn, mode) {
     backgroundColor: '#ffffff',
     scale: scale,
     useCORS: true,
-    allowTaint: false, // исправлено: ранее true приводило к tainted canvas
+    allowTaint: false,
     logging: false,
     width: captureWidth,
     height: captureHeight,
@@ -468,13 +461,10 @@ function takeScreenshot(btn, mode) {
           }
         } catch (e) { finalCanvas = newCanvas; }
       } catch (e) { console.warn('[CatWar Screenshot] visible crop:', e); }
-    }
-    // В режиме 'full' создаём КОПИЮ rawCanvas и рисуем штамп на копии.
-    // Почему копия, а не rawCanvas напрямую: html2canvas возвращает canvas,
-    // чей 2d-контекст может быть в особом состоянии (трансформации, флаги),
-    // из-за чего прямая отрисовка штампа молча не срабатывает.
-    // В v1.2.2 всегда делалась копия — вернул эту логику.
-    if (mode !== 'visible') {
+    } else {
+      // Создаём копию rawCanvas для рисования штампа на чистом 2d-контексте.
+      // Контекст canvas от html2canvas может быть в особом состоянии, из-за чего
+      // прямая отрисовка молча не срабатывает.
       try {
         const copyCanvas = document.createElement('canvas');
         copyCanvas.width = rawCanvas.width;
@@ -504,7 +494,7 @@ function takeScreenshot(btn, mode) {
       finalCanvas,
       mode === 'visible' ? 'видимое' : 'полная',
       function (filename) {
-        btn.textContent = '✅';
+        btn.textContent = '✅ Сохранено!';
         setTimeout(() => { btn.textContent = originalLabel; btn.disabled = originalDisabled; }, 1500);
       },
       function (errMsg) {
@@ -532,10 +522,10 @@ function buildGroup() {
   group.id = GROUP_ID;
   group.style.cssText = 'display: inline-flex; align-items: center; gap: 0; margin-left: 10px; vertical-align: middle;';
   const btnFull = document.createElement('button');
-  btnFull.type = 'button'; btnFull.textContent = '📸'; btnFull.title = 'Скриншот всей истории.';
+  btnFull.type = 'button'; btnFull.textContent = '📸 Вся история'; btnFull.title = 'Скриншот всей истории.';
   styleButton(btnFull, 'primary'); btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
   const btnVisible = document.createElement('button');
-  btnVisible.type = 'button'; btnVisible.textContent = '👁'; btnVisible.title = 'Скриншот видимой части.';
+  btnVisible.type = 'button'; btnVisible.textContent = '👁 Видимое'; btnVisible.title = 'Скриншот видимой части.';
   styleButton(btnVisible, 'secondary'); btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
   group.appendChild(btnFull); group.appendChild(btnVisible);
   return group;
@@ -559,7 +549,6 @@ function ensureButton() {
 }
 
 // ===== Наблюдение за появлением кнопки =====
-// Без 2-секундного setInterval — только MutationObserver с debounce.
 
 let ensureDebounce = null;
 function scheduleEnsure() {
@@ -572,8 +561,7 @@ function scheduleEnsure() {
   }, 150);
 }
 
-// Сначала ждём появления #history_block или td#history, потом навешиваем
-// узкий observer уже на сам блок, а не на document.body целиком.
+// Ждём появления блока истории, затем навешиваем узкий MutationObserver.
 waitForElement('#history_block, td#history', function () {
   ensureButton();
   const observerTarget = document.querySelector('td#history') || document.getElementById('history_block') || document.body;
