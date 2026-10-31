@@ -131,12 +131,38 @@
     const UNSUPPORTED_COLOR_FUNCS = ['color(', 'oklch(', 'oklab(', 'lab(', 'lch(', 'hwb('];
     const COLOR_PROPS_KEBAB = ['background-color','color','border-top-color','border-right-color','border-bottom-color','border-left-color','border-color','outline-color','text-decoration-color','fill','stroke','box-shadow','caret-color'];
 
+    function swapMultiFind(root) {
+        const targets = Array.from(root.querySelectorAll('multi-find-1-extension'));
+        const saved = [];
+        targets.forEach(original => {
+            const parent = original.parentNode;
+            const next = original.nextSibling;
+            const span = document.createElement('span');
+            span.style.cssText = 'background-color:' + (original.style.backgroundColor || 'transparent') + ';color:' + (original.style.color || 'inherit') + ';display:inline;';
+            span.textContent = original.textContent;
+            parent.replaceChild(span, original);
+            saved.push({ parent: parent, original: original, span: span, next: next });
+        });
+        return { count: targets.length, saved: saved };
+    }
+
+    function restoreMultiFind(data) {
+        if (!data || !data.saved) return;
+        data.saved.forEach(item => {
+            try {
+                if (item.span.parentNode === item.parent) {
+                    item.parent.replaceChild(item.original, item.span);
+                } else if (item.next && item.next.parentNode === item.parent) {
+                    item.parent.insertBefore(item.original, item.next);
+                } else {
+                    item.parent.appendChild(item.original);
+                }
+            } catch (e) {}
+        });
+    }
+
     function sanitizeClone(clonedDoc, rootEl) {
         const win = clonedDoc.defaultView;
-
-        try {
-            const count = replaceMultiFindInClone(clonedDoc, rootEl);
-        } catch (e) {}
 
         rootEl.style.setProperty('background-color', TARGET_BG_COLOR, 'important');
 
@@ -158,53 +184,6 @@
                 el.style.setProperty(prop, safe, 'important');
             });
         });
-    }
-
-    function replaceMultiFindInClone(clonedDoc, rootEl) {
-        let targets = rootEl.querySelectorAll('multi-find-1-extension');
-        if (targets.length === 0) {
-            targets = [];
-            const all = rootEl.getElementsByTagName('*');
-            for (let i = 0; i < all.length; i++) {
-                if (all[i].tagName && all[i].tagName.toLowerCase() === 'multi-find-1-extension') targets.push(all[i]);
-            }
-        }
-        let count = 0;
-        targets.forEach(original => {
-            let inlineBg = original.style.backgroundColor;
-            let inlineColor = original.style.color;
-            if ((!inlineBg || !inlineColor)) {
-                try {
-                    const cs = clonedDoc.defaultView.getComputedStyle(original);
-                    if (!inlineBg) inlineBg = cs.backgroundColor;
-                    if (!inlineColor) inlineColor = cs.color;
-                } catch (e) {}
-            }
-            const wordCss = `background-color: ${inlineBg || 'transparent'}; color: ${inlineColor || 'inherit'}; display: inline-block; padding: 0; margin: 0; line-height: inherit;`;
-            const spaceCss = `display: inline-block; background: transparent;`;
-            const fragment = clonedDoc.createDocumentFragment();
-            const text = original.textContent || '';
-            const parts = text.split(/(\s+)/);
-            parts.forEach(part => {
-                if (!part) return;
-                if (/^\s+$/.test(part)) {
-                    const s = clonedDoc.createElement('span');
-                    s.style.cssText = spaceCss;
-                    s.textContent = part;
-                    fragment.appendChild(s);
-                } else {
-                    const s = clonedDoc.createElement('span');
-                    s.style.cssText = wordCss;
-                    s.textContent = part;
-                    fragment.appendChild(s);
-                }
-            });
-            if (original.parentNode) {
-                original.parentNode.replaceChild(fragment, original);
-                count++;
-            }
-        });
-        return count;
     }
 
     let _dirHandle = null;
@@ -308,9 +287,7 @@
             void historyBlock.offsetHeight;
         }
 
-        const mfStyle = document.createElement('style');
-        mfStyle.textContent = 'multi-find-1-extension{display:inline!important}';
-        document.head.appendChild(mfStyle);
+        const mfData = swapMultiFind(target);
 
         const captureWidth = target.scrollWidth || target.offsetWidth;
         const captureHeight = target.offsetHeight;
@@ -337,7 +314,7 @@
                 historyBlock.style.resize = savedBlockStyles.resize;
             }
             if (group) group.style.display = savedGroupDisplay;
-            if (mfStyle) mfStyle.remove();
+            if (mfData) restoreMultiFind(mfData);
         }
 
         function finalize(rawCanvas) {
