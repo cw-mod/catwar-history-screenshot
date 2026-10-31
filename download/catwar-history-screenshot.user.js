@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      9.1
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «03:55:04 31.10.26 / 🌍 над MSK (как дробь)» (rgb(184,170,170), без рамки, не жирный, иконка 🌍 монохромная через U+FE0E). Фон td#history подменяется на rgb(107,86,88) — как в игре. #history_block ВСЕГДА раскрывается, для visible canvas обрезается с учётом scrollTop. В onclone: multi-find-элементы разбиваются на слова в <span inline-block>, color()/oklch()/etc санируются.
+// @version      10.0
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -20,7 +20,6 @@
 
     const GROUP_ID = 'cw-history-screenshot-group';
     const GROUP_ID_FLAT = 'cw-history-screenshot-group-flat';
-    const CLOCK_STAMP_ID = 'cw-history-clock-stamp';
 
     // Цвет бейджа часов (по запросу пользователя)
     const CLOCK_BG = 'rgb(184, 170, 170)';
@@ -102,64 +101,108 @@
     }
 
     // =========================================================================
-    //  Бейдж часов (rgb(184, 170, 170), без рамки)
+    //  Бейдж часов — рисуется прямо на canvas после захвата
     // =========================================================================
 
-    function createClockStamp() {
+    // Html2canvas не умеет рендерить двухуровневый layout (🌍 над MSK) внутри
+    // одного inline-элемента — flex, table, block-внутри-inline-block, <br>
+    // с white-space:pre — всё игнорируется, бейдж получается пустым.
+    // Поэтому бейдж рисуем сами, через ctx.fillText, ПОСЛЕ захвата canvas.
+    //
+    // Layout (всё на одной строке, 🌍 над MSK как дробь, MSK меньше):
+    //   ┌──────────────────────────────────────┐
+    //   │ 03:55:04 31.10.26    │   🌍   │      │
+    //   │                      │  MSK   │      │
+    //   └──────────────────────────────────────┘
+    function drawClockStampOnCanvas(ctx, scale, targetRect, h2Rect) {
+        if (!h2Rect) return;
+
         const msk = getMoscowDate();
         const timeStr = `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
         const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${String(msk.getFullYear()).slice(-2)}`;
 
-        const span = document.createElement('span');
-        span.id = CLOCK_STAMP_ID;
-        // Layout «как дробь»: 🌍 над MSK (числитель над знаменателем),
-        // время+дата — на отдельной строке сверху, всё по центру.
-        //
-        //   03:55:04 31.10.26
-        //          🌍
-        //          MSK
-        //
-        // 🌍 + U+FE0E (variation selector, монохромная) — глобус с материками.
-        // MSK через <span> с font-size:0.7em — чутка меньше.
-        // <br> для переносов строк (html2canvas рендерит <br> надёжнее,
-        // чем \n с white-space:pre).
-        span.innerHTML =
-            `${timeStr} ${dateStr}` +
-            `<br>\u{1F30D}\u{FE0E}` +
-            `<br><span style="font-size:0.7em">MSK</span>`;
-        span.style.cssText = [
-            'margin-left: 10px',
-            'padding: 4px 10px',
-            'font-family: Arial, "Segoe UI", sans-serif',
-            'font-size: 0.9em',
-            'font-weight: 400',
-            'line-height: 1.3',
-            'background: ' + CLOCK_BG,
-            'color: ' + CLOCK_TEXT,
-            'border-radius: 10px',
-            'vertical-align: middle',
-            'display: inline-block',
-            'text-align: center',
-            'user-select: none'
-        ].join(';') + ';';
-        return span;
-    }
+        // Позиция h2 на canvas (относительно target)
+        const h2RightOnCanvas = (h2Rect.right - targetRect.left) * scale;
+        const h2CenterYOnCanvas = ((h2Rect.top + h2Rect.bottom) / 2 - targetRect.top) * scale;
 
-    function insertClockStamp(target) {
-        const h2 = target.querySelector('h2');
-        if (!h2) return null;
-        const prev = h2.querySelector('#' + CLOCK_STAMP_ID);
-        if (prev) prev.remove();
-        const stamp = createClockStamp();
-        h2.appendChild(stamp);
-        return stamp;
-    }
+        // Размеры шрифтов (в canvas пикселях)
+        const mainFont = Math.max(11, 13 * scale);
+        const iconFont = Math.max(11, 13 * scale);
+        const mskFont = Math.max(9, 10 * scale);   // MSK меньше основного шрифта
 
-    function removeClockStamp(stamp) {
-        if (stamp && stamp.parentNode) {
-            stamp.parentNode.removeChild(stamp);
-        }
-        document.querySelectorAll('#' + CLOCK_STAMP_ID).forEach(el => el.remove());
+        const mainText = `${timeStr} ${dateStr}`;
+        const iconChar = '\u{1F30D}\u{FE0E}';   // 🌍 + U+FE0E (монохромная)
+
+        // Замеры
+        ctx.font = `${mainFont}px Arial, "Segoe UI", sans-serif`;
+        const mainW = ctx.measureText(mainText).width;
+
+        ctx.font = `${iconFont}px Arial, "Segoe UI", sans-serif`;
+        const iconW = ctx.measureText(iconChar).width;
+
+        ctx.font = `${mskFont}px Arial, "Segoe UI", sans-serif`;
+        const mskW = ctx.measureText('MSK').width;
+
+        // Layout бокса
+        const pad = 5 * scale;
+        const gap = 6 * scale;          // между mainText и правой колонкой
+        const smallGap = 1 * scale;     // между 🌍 и MSK
+        const rightColW = Math.max(iconW, mskW);
+        const rightColH = iconFont + smallGap + mskFont;
+        const contentH = Math.max(mainFont, rightColH);
+
+        const boxW = pad + mainW + gap + rightColW + pad;
+        const boxH = pad + contentH + pad;
+
+        // Позиция бокса: справа от h2, вертикально по центру h2
+        const boxX = h2RightOnCanvas + 8 * scale;
+        const boxY = h2CenterYOnCanvas - boxH / 2;
+
+        // Заливка фона со скруглёнными углами
+        const r = Math.min(10 * scale, boxW / 2, boxH / 2);
+        ctx.fillStyle = CLOCK_BG;
+        ctx.beginPath();
+        ctx.moveTo(boxX + r, boxY);
+        ctx.lineTo(boxX + boxW - r, boxY);
+        ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + r);
+        ctx.lineTo(boxX + boxW, boxY + boxH - r);
+        ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - r, boxY + boxH);
+        ctx.lineTo(boxX + r, boxY + boxH);
+        ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - r);
+        ctx.lineTo(boxX, boxY + r);
+        ctx.quadraticCurveTo(boxX, boxY, boxX + r, boxY);
+        ctx.closePath();
+        ctx.fill();
+
+        // Текст: чёрный
+        ctx.fillStyle = CLOCK_TEXT;
+
+        const contentTop = boxY + pad;
+        const contentCenterY = contentTop + contentH / 2;
+
+        // Левая часть: время + дата (вертикально по центру)
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.font = `${mainFont}px Arial, "Segoe UI", sans-serif`;
+        ctx.fillText(mainText, boxX + pad, contentCenterY);
+
+        // Правая колонка: 🌍 сверху, MSK снизу (как дробь)
+        const rightColX = boxX + pad + mainW + gap;
+        const rightColCenterX = rightColX + rightColW / 2;
+        const rightColTop = contentTop + (contentH - rightColH) / 2;
+
+        // 🌍 (числитель)
+        ctx.textAlign = 'center';
+        ctx.font = `${iconFont}px Arial, "Segoe UI", sans-serif`;
+        ctx.fillText(iconChar, rightColCenterX, rightColTop + iconFont / 2);
+
+        // MSK (знаменатель, меньше)
+        ctx.font = `${mskFont}px Arial, "Segoe UI", sans-serif`;
+        ctx.fillText('MSK', rightColCenterX, rightColTop + iconFont + smallGap + mskFont / 2);
+
+        // Восстанавливаем ctx
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
     }
 
     // =========================================================================
@@ -350,22 +393,19 @@
         const scale = Math.min(window.devicePixelRatio || 1.5, 2);
 
         // 1. Прячем группу кнопок 📲/👁 — на скрине в заголовке будут только
-        //    «История» и бейдж часов.
+        //    «История» и бейдж часов (бейдж рисуем на canvas после захвата).
         const group = document.getElementById(GROUP_ID) ||
                       document.getElementById(GROUP_ID_FLAT);
         const savedGroupDisplay = group ? group.style.display : null;
         if (group) group.style.display = 'none';
 
-        // 2. Внедряем бейдж часов в <h2>
-        const clockStamp = insertClockStamp(target);
-
-        // 3. Замеряем видимые размеры ДО раскрытия (для visible режима)
+        // 2. Замеряем видимые размеры ДО раскрытия (для visible режима и
+        //    для позиционирования бейджа относительно h2)
         const historyBlock = target.querySelector('#history_block');
         const h2El = target.querySelector('h2');
 
         const targetRect = target.getBoundingClientRect();
         const h2Rect = h2El ? h2El.getBoundingClientRect() : null;
-        const histRect = historyBlock ? historyBlock.getBoundingClientRect() : null;
 
         const visibleClientHeight = targetRect.height;
         const h2OffsetInTarget = h2Rect ? (h2Rect.top - targetRect.top) : 0;
@@ -432,9 +472,8 @@
                 historyBlock.style.overflowX = savedBlockStyles.overflowX;
                 historyBlock.style.resize = savedBlockStyles.resize;
             }
-            // 2. Удаляем бейдж часов
-            removeClockStamp(clockStamp);
-            // 3. Восстанавливаем видимость группы кнопок
+            // 2. Восстанавливаем видимость группы кнопок
+            //    (бейдж часов не в DOM — рисуется на canvas, восстанавливать нечего)
             if (group) group.style.display = savedGroupDisplay;
         }
 
@@ -486,6 +525,16 @@
                 } catch (e) {
                     console.warn('[CatWar Screenshot] Обрезка visible упала:', e);
                 }
+            }
+
+            // Рисуем бейдж часов прямо на canvas (после обрезки для visible,
+            // или на rawCanvas для full). Html2canvas не умеет двухуровневый
+            // layout — поэтому рисуем сами через ctx.fillText.
+            try {
+                const finalCtx = finalCanvas.getContext('2d');
+                drawClockStampOnCanvas(finalCtx, scale, targetRect, h2Rect);
+            } catch (e) {
+                console.warn('[CatWar Screenshot] drawClockStampOnCanvas упал:', e);
             }
 
             downloadCanvas(finalCanvas, mode === 'visible' ? 'видимое' : 'полная');
