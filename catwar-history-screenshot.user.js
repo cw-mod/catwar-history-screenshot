@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.3.1
+// @version      1.3.2
 // @description  Скриншот истории CatWar с бейджем времени по МСК
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -479,15 +479,42 @@ function takeScreenshot(btn, mode) {
         } catch (e) { finalCanvas = newCanvas; }
       } catch (e) { console.warn('[CatWar Screenshot] visible crop:', e); }
     }
-    // В режиме 'full' рисуем штамп прямо на rawCanvas.
-    // Контекст может быть null только если canvas уже использовался для willReadFrequently
-    // с другим контекстом — маловероятно, но проверяем.
+    // В режиме 'full' создаём КОПИЮ rawCanvas и рисуем штамп на копии.
+    // Почему копия, а не rawCanvas напрямую: html2canvas возвращает canvas,
+    // чей 2d-контекст может быть в особом состоянии (трансформации, флаги),
+    // из-за чего прямая отрисовка штампа молча не срабатывает.
+    // В v1.2.2 всегда делалась копия — вернул эту логику.
+    if (mode !== 'visible') {
+      try {
+        const copyCanvas = document.createElement('canvas');
+        copyCanvas.width = rawCanvas.width;
+        copyCanvas.height = rawCanvas.height;
+        const copyCtx = copyCanvas.getContext('2d');
+        copyCtx.drawImage(rawCanvas, 0, 0);
+        finalCanvas = copyCanvas;
+      } catch (e) {
+        console.warn('[CatWar Screenshot] Не удалось скопировать rawCanvas, рисую на оригинале:', e);
+        finalCanvas = rawCanvas;
+      }
+    }
+
+    // Рисуем штамп МСК на финальном canvas.
     const finalCtx = finalCanvas.getContext('2d');
     if (!finalCtx) {
       console.error('[CatWar Screenshot] Не удалось получить 2d context для штампа МСК');
     } else {
       try {
+        console.log('[CatWar Screenshot] drawClockStamp:', {
+          mode: mode,
+          canvasW: finalCanvas.width,
+          canvasH: finalCanvas.height,
+          scale: scale,
+          hasH2Rect: !!h2LinkRect,
+          h2Rect: h2LinkRect ? { top: h2LinkRect.top, right: h2LinkRect.right, bottom: h2LinkRect.bottom } : null,
+          targetRect: { top: targetRect.top, left: targetRect.left, width: targetRect.width, height: targetRect.height }
+        });
         drawClockStampOnCanvas(finalCtx, scale, targetRect, h2LinkRect);
+        console.log('[CatWar Screenshot] ✓ Штамп МСК отрисован');
       } catch (e) {
         console.error('[CatWar Screenshot] drawClockStampOnCanvas упал:', e);
       }
