@@ -532,10 +532,10 @@ function buildGroup() {
   group.id = GROUP_ID;
   group.style.cssText = 'display: inline-flex; align-items: center; gap: 0; margin-left: 10px; vertical-align: middle;';
   const btnFull = document.createElement('button');
-  btnFull.type = 'button'; btnFull.textContent = '📸 Вся история'; btnFull.title = 'Скриншот всей истории.';
+  btnFull.type = 'button'; btnFull.textContent = '📸'; btnFull.title = 'Скриншот всей истории.';
   styleButton(btnFull, 'primary'); btnFull.addEventListener('click', () => takeScreenshot(btnFull, 'full'));
   const btnVisible = document.createElement('button');
-  btnVisible.type = 'button'; btnVisible.textContent = '👁 Видимое'; btnVisible.title = 'Скриншот видимой части.';
+  btnVisible.type = 'button'; btnVisible.textContent = '👁'; btnVisible.title = 'Скриншот видимой части.';
   styleButton(btnVisible, 'secondary'); btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
   group.appendChild(btnFull); group.appendChild(btnVisible);
   return group;
