@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      8.5
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «🌍︎ 02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный, иконка монохромная через U+FE0E). Фон td#history подменяется на rgb(107,86,88) — как в игре, а не светлый из-за композита поверх белого. #history_block ВСЕГДА раскрывается, для visible canvas обрезается с учётом scrollTop. В onclone: multi-find-элементы разбиваются на слова в <span inline-block>, color()/oklch()/etc санируются.
+// @version      9.0
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «03:55:04 31.10.26 🌐 MSK» (rgb(184,170,170), без рамки, не жирный, иконка 🌐 монохромная через U+FE0E, всё в одну строку по образцу). Фон td#history подменяется на rgb(107,86,88) — как в игре. #history_block ВСЕГДА раскрывается, для visible canvas обрезается с учётом scrollTop. В onclone: multi-find-элементы разбиваются на слова в <span inline-block>, color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -112,34 +112,24 @@
 
         const span = document.createElement('span');
         span.id = CLOCK_STAMP_ID;
-        // Html2canvas надёжно рендерит только textContent в простом span.
-        // Все вложенные структуры (flex, grid, block-внутри-inline-block,
-        // inline-table) он игнорирует — поэтому бейдж через textContent с \n.
-        //
-        // Layout (white-space: pre сохраняет переносы):
-        //   03:45:58 31.10.26
-        //          🌍
-        //          MSK
-        //
-        // MSK через <span> с font-size:0.7em — чутка меньше.
-        span.innerHTML =
-            `${timeStr} ${dateStr}\n` +
-            `\u{1F30D}\u{FE0E}\n` +
-            `<span style="font-size:0.7em">MSK</span>`;
+        // Одна строка по образцу:
+        //   03:55:04 31.10.26 🌐 MSK
+        // Иконка 🌐 (глобус с меридианами, U+1F310) + U+FE0E (variation selector,
+        // монохромная) — стоит перед MSK, в конце.
+        span.textContent = `${timeStr} ${dateStr} \u{1F310}\u{FE0E} MSK`;
         span.style.cssText = [
             'margin-left: 10px',
-            'padding: 4px 10px',
+            'padding: 2px 10px',
             'font-family: Arial, "Segoe UI", sans-serif',
             'font-size: 0.9em',
             'font-weight: 400',
-            'line-height: 1.3',
+            'line-height: 1.4',
             'background: ' + CLOCK_BG,
             'color: ' + CLOCK_TEXT,
             'border-radius: 10px',
             'vertical-align: middle',
+            'white-space: nowrap',
             'display: inline-block',
-            'white-space: pre',
-            'text-align: center',
             'user-select: none'
         ].join(';') + ';';
         return span;
