@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.2.0
+// @version      1.2.1
 // @description  Скриншот истории CatWar с бейджем времени по МСК
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -353,6 +353,7 @@
             void historyBlock.offsetHeight;
         }
 
+        const savedHTML = target.innerHTML;
         const mfCount = replaceMultiFindInDOM(target);
         console.info('[CatWar Screenshot] заменено multi-find в оригинале: ' + mfCount);
 
@@ -381,6 +382,7 @@
                 historyBlock.style.resize = savedBlockStyles.resize;
             }
             if (group) group.style.display = savedGroupDisplay;
+            if (savedHTML) target.innerHTML = savedHTML;
         }
 
         function finalize(rawCanvas) {
