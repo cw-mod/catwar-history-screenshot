@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.3.2
+// @version      1.3.3
 // @description  Скриншот истории CatWar с бейджем времени по МСК
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -32,23 +32,13 @@ let isCapturing = false;
 // ===== Утилиты =====
 
 function getMoscowDate() {
-  // Надёжное получение времени по Москве через Intl с таймзоной.
-  // Часы/минуты/секунды берём из отформатированной строки, дата — из той же таймзоны.
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/Moscow',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false
-  }).formatToParts(new Date());
-  const get = (type) => parts.find(p => p.type === type).value;
-  return new Date(
-    Number(get('year')),
-    Number(get('month')) - 1,
-    Number(get('day')),
-    Number(get('hour')) === 24 ? 0 : Number(get('hour')),
-    Number(get('minute')),
-    Number(get('second'))
-  );
+  // Возвращаем Date, у которого getHours()/getMinutes()/... дают московские значения.
+  // Берём UTC-момент и смещаем на +3 часа (MSK = UTC+3, без DST с 2014 года).
+  // Подход через Intl+formatToParts создаёт Date из «московских компонентов» в локальной
+  // зоне — это ломается при любом использовании getTime()/toISOString() и в не-UTC зонах.
+  // Смещение через UTC-методы даёт Date, чьи getHours/getDate корректно возвращают MSK.
+  const now = new Date();
+  return new Date(now.getTime() + (now.getTimezoneOffset() + 180) * 60000);
 }
 
 function pad(n) { return String(n).padStart(2, '0'); }
@@ -504,17 +494,7 @@ function takeScreenshot(btn, mode) {
       console.error('[CatWar Screenshot] Не удалось получить 2d context для штампа МСК');
     } else {
       try {
-        console.log('[CatWar Screenshot] drawClockStamp:', {
-          mode: mode,
-          canvasW: finalCanvas.width,
-          canvasH: finalCanvas.height,
-          scale: scale,
-          hasH2Rect: !!h2LinkRect,
-          h2Rect: h2LinkRect ? { top: h2LinkRect.top, right: h2LinkRect.right, bottom: h2LinkRect.bottom } : null,
-          targetRect: { top: targetRect.top, left: targetRect.left, width: targetRect.width, height: targetRect.height }
-        });
         drawClockStampOnCanvas(finalCtx, scale, targetRect, h2LinkRect);
-        console.log('[CatWar Screenshot] ✓ Штамп МСК отрисован');
       } catch (e) {
         console.error('[CatWar Screenshot] drawClockStampOnCanvas упал:', e);
       }
