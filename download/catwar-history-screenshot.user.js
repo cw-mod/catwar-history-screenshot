@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      7.4
+// @version      7.5
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). В onclone html2canvas: <multi-find-1-extension> разбивается на отдельные слова в <span> (одно слово — один span, подсветка не смазывается при переносе строки), color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -175,37 +175,59 @@
     // В клонированном документе Multi-Find не активен (его JS не работает
     // в клоне), поэтому безопасно можно:
     //   1. Заменить <multi-find-1-extension> на набор <span> по одному на
-    //      каждое слово (с пробелами как text nodes между ними). Иначе
-    //      html2canvas рендерит span с многословным текстом и background-color
-    //      как block при переносе строки — подсветка «смазывается».
+    //      каждое слово (display: inline-block) + <span> с пробелами между
+    //      ними (display: inline-block, transparent). Иначе html2canvas
+    //      рендерит подряд идущие inline-span с одинаковым фоном как один
+    //      сплошной блок — подсветка «слипается».
     //   2. Санировать color()/oklch()/oklab()/lab()/lch()/hwb() в computed
     //      стилях — html2canvas их не умеет парсить и падает.
     function sanitizeClone(clonedDoc, rootEl) {
         const win = clonedDoc.defaultView;
+        let replacedCount = 0;
 
-        // --- 1. Замена multi-find-extension на набор слов в span ---
+        // --- 1. Замена multi-find-extension на набор слов в inline-block ---
         const mfeTargets = Array.from(rootEl.querySelectorAll('multi-find-1-extension'));
         mfeTargets.forEach(original => {
-            const inlineBg = original.style.backgroundColor;
-            const inlineColor = original.style.color;
+            let inlineBg = original.style.backgroundColor;
+            let inlineColor = original.style.color;
 
-            // Собираем CSS для каждого слова
+            // Если инлайн-стиля нет — берём из computed
+            if ((!inlineBg || !inlineColor) && win) {
+                try {
+                    const cs = win.getComputedStyle(original);
+                    if (!inlineBg) inlineBg = cs.backgroundColor;
+                    if (!inlineColor) inlineColor = cs.color;
+                } catch (e) {}
+            }
+
+            // inline-block: имеет явную ширину по содержимому, не растягивается
+            // на всю строку и не сливается с соседями.
             const wordCss =
                 `background-color: ${inlineBg || 'transparent'}; ` +
                 `color: ${inlineColor || 'inherit'}; ` +
-                `display: inline !important;`;
+                `display: inline-block; ` +
+                `padding: 0; ` +
+                `margin: 0; ` +
+                `line-height: inherit;`;
+
+            // Пробелы — отдельный span с transparent фоном и inline-block,
+            // чтобы html2canvas точно видел разделитель между подсвеченными
+            // словами (text node может рендериться с нулевой шириной).
+            const spaceCss =
+                `display: inline-block; ` +
+                `background: transparent;`;
 
             const fragment = clonedDoc.createDocumentFragment();
             const text = original.textContent || '';
-            // Разбиваем с сохранением пробельных групп
             const parts = text.split(/(\s+)/);
             parts.forEach(part => {
                 if (!part) return;
                 if (/^\s+$/.test(part)) {
-                    // Пробелы — text node, без подсветки
-                    fragment.appendChild(clonedDoc.createTextNode(part));
+                    const spaceSpan = clonedDoc.createElement('span');
+                    spaceSpan.style.cssText = spaceCss;
+                    spaceSpan.textContent = part;
+                    fragment.appendChild(spaceSpan);
                 } else {
-                    // Слово — span с подсветкой
                     const span = clonedDoc.createElement('span');
                     span.style.cssText = wordCss;
                     span.textContent = part;
@@ -215,8 +237,11 @@
 
             if (original.parentNode) {
                 original.parentNode.replaceChild(fragment, original);
+                replacedCount++;
             }
         });
+
+        console.info('[CatWar Screenshot] sanitizeClone: заменено ' + replacedCount + ' multi-find элементов');
 
         // --- 2. Санирование color-функций ---
         if (!win) return;
