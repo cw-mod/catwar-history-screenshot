@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      8.1
+// @version      8.2
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «🌍︎ 02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный, иконка монохромная через U+FE0E). Фон td#history подменяется на rgb(107,86,88) — как в игре, а не светлый из-за композита поверх белого. #history_block ВСЕГДА раскрывается, для visible canvas обрезается с учётом scrollTop. В onclone: multi-find-элементы разбиваются на слова в <span inline-block>, color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -112,23 +112,46 @@
 
         const span = document.createElement('span');
         span.id = CLOCK_STAMP_ID;
-        // 🌍 + U+FE0E (variation selector) — монохромная иконка глобуса, как в UwU
-        span.textContent = `\u{1F30D}\u{FE0E} ${timeStr} ${dateStr} MSK`;
         span.style.cssText = [
             'margin-left: 10px',
-            'padding: 2px 10px',
+            'padding: 4px 10px',
             'font-family: Arial, "Segoe UI", sans-serif',
             'font-size: 0.9em',
             'font-weight: 400',
-            'line-height: 1.4',
+            'line-height: 1.3',
             'background: ' + CLOCK_BG,
             'color: ' + CLOCK_TEXT,
             'border-radius: 10px',
             'vertical-align: middle',
             'white-space: nowrap',
-            'display: inline-block',
+            'display: inline-flex',
+            'align-items: center',
+            'gap: 8px',
             'user-select: none'
         ].join(';') + ';';
+
+        // Левая часть: время + дата в одну строку
+        const timeDateSpan = document.createElement('span');
+        timeDateSpan.textContent = `${timeStr} ${dateStr}`;
+
+        // Правая часть: иконка 🌍 над MSK (в столбец), MSK чутка меньше
+        const iconMskSpan = document.createElement('span');
+        iconMskSpan.style.cssText =
+            'display: inline-flex; flex-direction: column; align-items: center; line-height: 1.2;';
+
+        const iconSpan = document.createElement('span');
+        // 🌍 + U+FE0E (variation selector) — монохромная иконка глобуса, как в UwU
+        iconSpan.textContent = '\u{1F30D}\u{FE0E}';
+
+        const mskSpan = document.createElement('span');
+        mskSpan.textContent = 'MSK';
+        mskSpan.style.cssText = 'font-size: 0.7em; margin-top: 2px;';
+
+        iconMskSpan.appendChild(iconSpan);
+        iconMskSpan.appendChild(mskSpan);
+
+        span.appendChild(timeDateSpan);
+        span.appendChild(iconMskSpan);
         return span;
     }
 
