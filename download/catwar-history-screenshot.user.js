@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      10.1
+// @version      10.2
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -115,15 +115,9 @@
     //   │                      │  MSK   │      │
     //   └──────────────────────────────────────┘
     function drawClockStampOnCanvas(ctx, scale, targetRect, h2Rect) {
-        if (!h2Rect) return;
-
         const msk = getMoscowDate();
         const timeStr = `${pad(msk.getHours())}:${pad(msk.getMinutes())}:${pad(msk.getSeconds())}`;
         const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${String(msk.getFullYear()).slice(-2)}`;
-
-        // Позиция h2 на canvas (относительно target)
-        const h2RightOnCanvas = (h2Rect.right - targetRect.left) * scale;
-        const h2CenterYOnCanvas = ((h2Rect.top + h2Rect.bottom) / 2 - targetRect.top) * scale;
 
         // Размеры шрифтов (в canvas пикселях)
         const mainFont = Math.max(11, 13 * scale);
@@ -154,9 +148,32 @@
         const boxW = pad + mainW + gap + rightColW + pad;
         const boxH = pad + contentH + pad;
 
-        // Позиция бокса: справа от h2, вертикально по центру h2
-        const boxX = h2RightOnCanvas + 8 * scale;
-        const boxY = h2CenterYOnCanvas - boxH / 2;
+        // Позиция: справа от текста «История», вертикально по центру h2.
+        // Если h2Rect есть — используем его. Иначе — правый верхний угол canvas.
+        let boxX, boxY;
+        if (h2Rect) {
+            const h2RightOnCanvas = (h2Rect.right - targetRect.left) * scale;
+            const h2CenterYOnCanvas = ((h2Rect.top + h2Rect.bottom) / 2 - targetRect.top) * scale;
+            boxX = h2RightOnCanvas + 8 * scale;
+            boxY = h2CenterYOnCanvas - boxH / 2;
+        } else {
+            boxX = ctx.canvas.width - boxW - 10 * scale;
+            boxY = 10 * scale;
+        }
+
+        console.info('[CatWar Screenshot] drawClockStampOnCanvas:', {
+            canvasW: ctx.canvas.width,
+            canvasH: ctx.canvas.height,
+            boxX: boxX,
+            boxY: boxY,
+            boxW: boxW,
+            boxH: boxH,
+            mainW: mainW,
+            iconW: iconW,
+            mskW: mskW,
+            scale: scale,
+            h2Rect: h2Rect ? 'yes' : 'null'
+        });
 
         // Заливка фона со скруглёнными углами
         const r = Math.min(10 * scale, boxW / 2, boxH / 2);
