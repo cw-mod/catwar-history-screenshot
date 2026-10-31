@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      7.5
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). В onclone html2canvas: <multi-find-1-extension> разбивается на отдельные слова в <span> (одно слово — один span, подсветка не смазывается при переносе строки), color()/oklch()/etc санируются.
+// @version      8.0
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). #history_block ВСЕГДА раскрывается (height:auto, overflow:visible) — иначе html2canvas рендерит multi-find-подсветку со скроллом и она мазалась. Для visible режима canvas обрезается до видимой области с учётом scrollTop. В onclone: <multi-find-1-extension> разбивается на слова в <span inline-block>, color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -333,10 +333,25 @@
         // 2. Внедряем бейдж часов в <h2>
         const clockStamp = insertClockStamp(target);
 
-        // 3. Для «full» — раскрываем #history_block
+        // 3. Замеряем видимые размеры ДО раскрытия (для visible режима)
         const historyBlock = target.querySelector('#history_block');
+        const h2El = target.querySelector('h2');
+
+        const targetRect = target.getBoundingClientRect();
+        const h2Rect = h2El ? h2El.getBoundingClientRect() : null;
+        const histRect = historyBlock ? historyBlock.getBoundingClientRect() : null;
+
+        const visibleClientHeight = targetRect.height;
+        const h2OffsetInTarget = h2Rect ? (h2Rect.top - targetRect.top) : 0;
+        const h2Height = h2Rect ? h2Rect.height : 0;
+        const scrollTop = historyBlock ? historyBlock.scrollTop : 0;
+
+        // 4. ВСЕГДА раскрываем #history_block — и для full, и для visible.
+        //    Иначе html2canvas рендерит #history_block со скроллом, и
+        //    multi-find-extension, которые частично срезаны скроллом,
+        //    рендерятся с растянутой подсветкой (мазня).
         let savedBlockStyles = null;
-        if (mode === 'full' && historyBlock) {
+        if (historyBlock) {
             savedBlockStyles = {
                 height: historyBlock.style.height,
                 maxHeight: historyBlock.style.maxHeight,
@@ -354,11 +369,9 @@
             void historyBlock.offsetHeight;
         }
 
-        // 4. Замеряем размеры
+        // 5. Замеряем размеры ПОСЛЕ раскрытия
         const captureWidth = target.scrollWidth || target.offsetWidth;
-        const captureHeight = mode === 'full'
-            ? target.offsetHeight
-            : target.clientHeight;
+        const captureHeight = target.offsetHeight;
 
         // Санирование (замена multi-find на span + color-функции) делаем в
         // onclone — то есть в уже клонированном документе, где Multi-Find
@@ -401,7 +414,55 @@
 
         function finalize(rawCanvas) {
             cleanup();
-            downloadCanvas(rawCanvas, mode === 'visible' ? 'видимое' : 'полная');
+
+            // Для visible режима — обрезаем canvas до видимой области.
+            // После раскрытия canvas содержит полный td#history: padding.top +
+            // h2 + полная #history_block (без скролла).
+            // Хотим показать: padding.top + h2 + видимую часть #history_block
+            // (с учётом scrollTop).
+            let finalCanvas = rawCanvas;
+            if (mode === 'visible') {
+                try {
+                    const s = scale;
+                    // Верхняя часть (padding + h2) — копируем как есть
+                    const upperEnd = Math.round((h2OffsetInTarget + h2Height) * s);
+                    // Начало видимой части истории в полном canvas:
+                    // h2OffsetInTarget + h2Height + scrollTop
+                    const histSrcY = Math.round((h2OffsetInTarget + h2Height + scrollTop) * s);
+                    // Высота видимой части истории:
+                    // visibleClientHeight - h2OffsetInTarget - h2Height
+                    const histSrcH = Math.max(0, Math.round((visibleClientHeight - h2OffsetInTarget - h2Height) * s));
+
+                    const newCanvas = document.createElement('canvas');
+                    newCanvas.width = rawCanvas.width;
+                    newCanvas.height = Math.round(visibleClientHeight * s);
+                    const ctx = newCanvas.getContext('2d');
+
+                    // Заливаем белым фоном (на всякий случай)
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, newCanvas.width, newCanvas.height);
+
+                    // Копируем padding + h2
+                    if (upperEnd > 0) {
+                        ctx.drawImage(rawCanvas,
+                            0, 0, rawCanvas.width, upperEnd,
+                            0, 0, rawCanvas.width, upperEnd);
+                    }
+
+                    // Копируем видимую часть истории (со смещением скролла)
+                    if (histSrcH > 0) {
+                        ctx.drawImage(rawCanvas,
+                            0, histSrcY, rawCanvas.width, histSrcH,
+                            0, upperEnd, rawCanvas.width, histSrcH);
+                    }
+
+                    finalCanvas = newCanvas;
+                } catch (e) {
+                    console.warn('[CatWar Screenshot] Обрезка visible упала:', e);
+                }
+            }
+
+            downloadCanvas(finalCanvas, mode === 'visible' ? 'видимое' : 'полная');
 
             btn.textContent = '✅ Сохранено!';
             setTimeout(() => {
