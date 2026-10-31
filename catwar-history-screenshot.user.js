@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.3.0
+// @version      1.3.1
 // @description  Скриншот истории CatWar с бейджем времени по МСК
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -112,24 +112,30 @@ function drawClockStampOnCanvas(ctx, scale, targetRect, h2Rect) {
   const boxH = boxPad + contentH + boxPad;
 
   let boxX, boxY;
+  // Естественная позиция — правее h2 (или link внутри h2).
   if (h2Rect) {
     const h2RightOnCanvas = (h2Rect.right - targetRect.left) * scale;
     const h2CenterYOnCanvas = ((h2Rect.top + h2Rect.bottom) / 2 - targetRect.top) * scale;
-    boxX = h2RightOnCanvas + 8 * scale;
-    boxY = h2CenterYOnCanvas - boxH / 2;
-    // Защита от выхода за правый край canvas.
-    if (boxX + boxW > ctx.canvas.width) {
-      boxX = ctx.canvas.width - boxW - 4 * scale;
-    }
-    if (boxX < 4 * scale) boxX = 4 * scale;
-    if (boxY < 4 * scale) boxY = 4 * scale;
-    if (boxY + boxH > ctx.canvas.height - 4 * scale) {
-      boxY = ctx.canvas.height - boxH - 4 * scale;
+    const naturalX = h2RightOnCanvas + 8 * scale;
+    const naturalY = h2CenterYOnCanvas - boxH / 2;
+    // Если естественная позиция помещается — используем её.
+    // Если нет — fallback в правый верхний угол canvas (не сдвигаем на текст!).
+    if (naturalX + boxW <= ctx.canvas.width && naturalX >= 0 &&
+        naturalY >= 4 * scale && naturalY + boxH <= ctx.canvas.height - 4 * scale) {
+      boxX = naturalX;
+      boxY = naturalY;
+    } else {
+      boxX = ctx.canvas.width - boxW - 10 * scale;
+      boxY = 10 * scale;
     }
   } else {
     boxX = ctx.canvas.width - boxW - 10 * scale;
     boxY = 10 * scale;
   }
+  // Финальная защита: если boxW больше canvas.width — всё равно рисуем,
+  // но прижимаем к левому краю с минимальным отступом.
+  if (boxX < 0) boxX = 4 * scale;
+  if (boxX + boxW > ctx.canvas.width) boxX = Math.max(4 * scale, ctx.canvas.width - boxW - 4 * scale);
 
   const r = Math.min(10 * scale, boxW / 2, boxH / 2);
   ctx.fillStyle = CLOCK_BG;
@@ -174,7 +180,23 @@ function swapMultiFind(root) {
     const parent = original.parentNode;
     const next = original.nextSibling;
     const span = document.createElement('span');
-    span.style.cssText = 'background-color:' + (original.style.backgroundColor || 'transparent') + ';color:' + (original.style.color || 'inherit') + ';display:inline;';
+    // Сохраняем ВСЕ inline-стили оригинала (display, padding, border-radius, box-shadow),
+    // а не только background-color и color. Иначе подсветка расплывается по строкам:
+    // оригинал мог быть display:inline-block с padding, что давало аккуратный прямоугольник.
+    let inlineCss = original.style.cssText || '';
+    // Гарантируем видимые цвета: если inline не задан — берём из getComputedStyle,
+    // чтобы захватить стили из CSS-классов расширения.
+    const cs = getComputedStyle(original);
+    const bg = original.style.backgroundColor || cs.backgroundColor || 'transparent';
+    const color = original.style.color || cs.color || 'inherit';
+    // Если в inline-стиле не было display — ставим inline-block как безопасный дефолт
+    // (сохраняет прямоугольную форму подсветки на одной строке).
+    if (!/display\s*:/.test(inlineCss)) {
+      inlineCss += (inlineCss && !/;\s*$/.test(inlineCss) ? ';' : '') + 'display:inline-block';
+    }
+    // Явно прописываем цвета, чтобы sanitizeClone их увидел через [style].
+    inlineCss += ';background-color:' + bg + ';color:' + color;
+    span.style.cssText = inlineCss;
     span.textContent = original.textContent;
     parent.replaceChild(span, original);
     saved.push({ parent: parent, original: original, span: span, next: next });
@@ -457,12 +479,19 @@ function takeScreenshot(btn, mode) {
         } catch (e) { finalCanvas = newCanvas; }
       } catch (e) { console.warn('[CatWar Screenshot] visible crop:', e); }
     }
-    // В режиме 'full' рисуем штамп прямо на rawCanvas — копия не нужна.
-
-    try {
-      const finalCtx = finalCanvas.getContext('2d');
-      drawClockStampOnCanvas(finalCtx, scale, targetRect, h2LinkRect);
-    } catch (e) {}
+    // В режиме 'full' рисуем штамп прямо на rawCanvas.
+    // Контекст может быть null только если canvas уже использовался для willReadFrequently
+    // с другим контекстом — маловероятно, но проверяем.
+    const finalCtx = finalCanvas.getContext('2d');
+    if (!finalCtx) {
+      console.error('[CatWar Screenshot] Не удалось получить 2d context для штампа МСК');
+    } else {
+      try {
+        drawClockStampOnCanvas(finalCtx, scale, targetRect, h2LinkRect);
+      } catch (e) {
+        console.error('[CatWar Screenshot] drawClockStampOnCanvas упал:', e);
+      }
+    }
 
     downloadCanvas(
       finalCanvas,
