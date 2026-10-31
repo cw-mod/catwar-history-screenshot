@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      10.6
+// @version      10.7
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -120,21 +120,21 @@
         const dateStr = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${String(msk.getFullYear()).slice(-2)}`;
 
         // Размеры шрифтов (в canvas пикселях)
-        const mainFont = Math.max(16, 20 * scale);
+        const mainFont = Math.max(20, 28 * scale);
         const iconFont = Math.max(16, 20 * scale);
-        const mskFont = Math.max(12, 14 * scale);   // MSK меньше основного шрифта
+        const mskFont = Math.max(11, 14 * scale);   // MSK меньше основного шрифта
 
         const mainText = `${timeStr} ${dateStr}`;
         const iconChar = '\u{1F30D}\u{FE0E}';   // 🌍 + U+FE0E (монохромная)
 
         // Замеры
-        ctx.font = `${mainFont}px Arial, sans-serif`;
+        ctx.font = `${mainFont}px Arial`;
         const mainW = ctx.measureText(mainText).width;
 
-        ctx.font = `${iconFont}px Arial, sans-serif`;
+        ctx.font = `${iconFont}px Arial`;
         const iconW = ctx.measureText(iconChar).width;
 
-        ctx.font = `${mskFont}px Arial, sans-serif`;
+        ctx.font = `${mskFont}px Arial`;
         const mskW = ctx.measureText('MSK').width;
 
         // Layout бокса
@@ -200,7 +200,7 @@
         // Левая часть: время + дата (слева бейджа)
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
-        ctx.font = `${mainFont}px Arial, sans-serif`;
+        ctx.font = `${mainFont}px Arial`;
         ctx.fillText(mainText, boxX + boxPad, contentCenterY);
 
         // Правая колонка: 🌍 сверху, MSK снизу (прижата к правому краю бейджа)
@@ -210,11 +210,11 @@
 
         // 🌍 (числитель)
         ctx.textAlign = 'center';
-        ctx.font = `${iconFont}px Arial, sans-serif`;
+        ctx.font = `${iconFont}px Arial`;
         ctx.fillText(iconChar, rightColCenterX, rightColTop + iconFont / 2);
 
         // MSK (знаменатель, меньше)
-        ctx.font = `${mskFont}px Arial, sans-serif`;
+        ctx.font = `${mskFont}px Arial`;
         ctx.fillText('MSK', rightColCenterX, rightColTop + iconFont + smallGap + mskFont / 2);
 
         // Восстанавливаем ctx
