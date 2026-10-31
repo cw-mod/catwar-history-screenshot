@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      10.0
+// @version      10.1
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -403,13 +403,19 @@
         //    для позиционирования бейджа относительно h2)
         const historyBlock = target.querySelector('#history_block');
         const h2El = target.querySelector('h2');
+        // Для бейджа ищем <a> внутри h2 (текст «История») — h2 это block,
+        // его right = правому краю td#history, места для бейджа справа нет.
+        // <a> узкий, справа от него есть место.
+        const h2Link = h2El ? h2El.querySelector('a') : null;
 
         const targetRect = target.getBoundingClientRect();
-        const h2Rect = h2El ? h2El.getBoundingClientRect() : null;
+        const h2FullRect = h2El ? h2El.getBoundingClientRect() : null;
+        const h2LinkRect = h2Link ? h2Link.getBoundingClientRect() : h2FullRect;
 
         const visibleClientHeight = targetRect.height;
-        const h2OffsetInTarget = h2Rect ? (h2Rect.top - targetRect.top) : 0;
-        const h2Height = h2Rect ? h2Rect.height : 0;
+        // Для обрезки visible — используем h2FullRect (весь h2)
+        const h2OffsetInTarget = h2FullRect ? (h2FullRect.top - targetRect.top) : 0;
+        const h2Height = h2FullRect ? h2FullRect.height : 0;
         const scrollTop = historyBlock ? historyBlock.scrollTop : 0;
 
         // 4. ВСЕГДА раскрываем #history_block — и для full, и для visible.
@@ -530,9 +536,10 @@
             // Рисуем бейдж часов прямо на canvas (после обрезки для visible,
             // или на rawCanvas для full). Html2canvas не умеет двухуровневый
             // layout — поэтому рисуем сами через ctx.fillText.
+            // Позиция — справа от текста «История» (<a> внутри h2).
             try {
                 const finalCtx = finalCanvas.getContext('2d');
-                drawClockStampOnCanvas(finalCtx, scale, targetRect, h2Rect);
+                drawClockStampOnCanvas(finalCtx, scale, targetRect, h2LinkRect);
             } catch (e) {
                 console.warn('[CatWar Screenshot] drawClockStampOnCanvas упал:', e);
             }
