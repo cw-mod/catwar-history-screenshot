@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.2.1
+// @version      1.2.2
 // @description  Скриншот истории CatWar с бейджем времени по МСК
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -130,51 +130,6 @@
 
     const UNSUPPORTED_COLOR_FUNCS = ['color(', 'oklch(', 'oklab(', 'lab(', 'lch(', 'hwb('];
     const COLOR_PROPS_KEBAB = ['background-color','color','border-top-color','border-right-color','border-bottom-color','border-left-color','border-color','outline-color','text-decoration-color','fill','stroke','box-shadow','caret-color'];
-
-    function findMultiFindElements(root) {
-        let els = root.querySelectorAll('multi-find-1-extension');
-        if (els.length === 0) {
-            els = [];
-            const all = root.getElementsByTagName('*');
-            for (let i = 0; i < all.length; i++) {
-                if (all[i].tagName.toLowerCase() === 'multi-find-1-extension') els.push(all[i]);
-            }
-        }
-        return els;
-    }
-
-    function replaceMultiFindInDOM(root) {
-        const targets = findMultiFindElements(root);
-        const replacements = [];
-        targets.forEach(original => {
-            const inlineBg = original.style.backgroundColor;
-            const inlineColor = original.style.color;
-            const wordCss = `background-color: ${inlineBg || 'transparent'}; color: ${inlineColor || 'inherit'}; display: inline-block; padding: 0; margin: 0; line-height: inherit;`;
-            const spaceCss = `display: inline-block; background: transparent;`;
-            const fragment = document.createDocumentFragment();
-            const text = original.textContent || '';
-            const parts = text.split(/(\s+)/);
-            parts.forEach(part => {
-                if (!part) return;
-                if (/^\s+$/.test(part)) {
-                    const s = document.createElement('span');
-                    s.style.cssText = spaceCss;
-                    s.textContent = part;
-                    fragment.appendChild(s);
-                } else {
-                    const s = document.createElement('span');
-                    s.style.cssText = wordCss;
-                    s.textContent = part;
-                    fragment.appendChild(s);
-                }
-            });
-            if (original.parentNode) {
-                original.parentNode.replaceChild(fragment, original);
-                replacements.push({ original: original, parent: original.parentNode, fragment: fragment });
-            }
-        });
-        return replacements.length;
-    }
 
     function sanitizeClone(clonedDoc, rootEl) {
         const win = clonedDoc.defaultView;
@@ -353,9 +308,9 @@
             void historyBlock.offsetHeight;
         }
 
-        const savedHTML = target.innerHTML;
-        const mfCount = replaceMultiFindInDOM(target);
-        console.info('[CatWar Screenshot] заменено multi-find в оригинале: ' + mfCount);
+        const mfStyle = document.createElement('style');
+        mfStyle.textContent = 'multi-find-1-extension{display:inline!important}';
+        document.head.appendChild(mfStyle);
 
         const captureWidth = target.scrollWidth || target.offsetWidth;
         const captureHeight = target.offsetHeight;
@@ -382,7 +337,7 @@
                 historyBlock.style.resize = savedBlockStyles.resize;
             }
             if (group) group.style.display = savedGroupDisplay;
-            if (savedHTML) target.innerHTML = savedHTML;
+            if (mfStyle) mfStyle.remove();
         }
 
         function finalize(rawCanvas) {
