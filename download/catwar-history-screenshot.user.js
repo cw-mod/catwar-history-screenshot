@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      10.9
+// @version      11.0
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -512,13 +512,8 @@
             if (mode === 'visible') {
                 try {
                     const s = scale;
-                    // Верхняя часть (padding + h2) — копируем как есть
                     const upperEnd = Math.round((h2OffsetInTarget + h2Height) * s);
-                    // Начало видимой части истории в полном canvas:
-                    // h2OffsetInTarget + h2Height + scrollTop
                     const histSrcY = Math.round((h2OffsetInTarget + h2Height + scrollTop) * s);
-                    // Высота видимой части истории:
-                    // visibleClientHeight - h2OffsetInTarget - h2Height
                     const histSrcH = Math.max(0, Math.round((visibleClientHeight - h2OffsetInTarget - h2Height) * s));
 
                     const newCanvas = document.createElement('canvas');
@@ -526,18 +521,15 @@
                     newCanvas.height = Math.round(visibleClientHeight * s);
                     const ctx = newCanvas.getContext('2d');
 
-                    // Заливаем белым фоном (на всякий случай)
                     ctx.fillStyle = '#ffffff';
                     ctx.fillRect(0, 0, newCanvas.width, newCanvas.height);
 
-                    // Копируем padding + h2
                     if (upperEnd > 0) {
                         ctx.drawImage(rawCanvas,
                             0, 0, rawCanvas.width, upperEnd,
                             0, 0, rawCanvas.width, upperEnd);
                     }
 
-                    // Копируем видимую часть истории (со смещением скролла)
                     if (histSrcH > 0) {
                         ctx.drawImage(rawCanvas,
                             0, histSrcY, rawCanvas.width, histSrcH,
@@ -547,6 +539,19 @@
                     finalCanvas = newCanvas;
                 } catch (e) {
                     console.warn('[CatWar Screenshot] Обрезка visible упала:', e);
+                }
+            } else {
+                // Для full режима — копируем rawCanvas на новый canvas,
+                // потому что fillText может не работать на canvas от html2canvas.
+                try {
+                    const copyCanvas = document.createElement('canvas');
+                    copyCanvas.width = rawCanvas.width;
+                    copyCanvas.height = rawCanvas.height;
+                    const copyCtx = copyCanvas.getContext('2d');
+                    copyCtx.drawImage(rawCanvas, 0, 0);
+                    finalCanvas = copyCanvas;
+                } catch (e) {
+                    console.warn('[CatWar Screenshot] Копирование full canvas упало:', e);
                 }
             }
 
