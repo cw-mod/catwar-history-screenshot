@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      8.0
-// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный). #history_block ВСЕГДА раскрывается (height:auto, overflow:visible) — иначе html2canvas рендерит multi-find-подсветку со скроллом и она мазалась. Для visible режима canvas обрезается до видимой области с учётом scrollTop. В onclone: <multi-find-1-extension> разбивается на слова в <span inline-block>, color()/oklch()/etc санируются.
+// @version      8.1
+// @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся, в <h2> вставляется бейдж «🌍︎ 02:05:44 31.10.26 MSK» (rgb(184,170,170), без рамки, не жирный, иконка монохромная через U+FE0E). Фон td#history подменяется на rgb(107,86,88) — как в игре, а не светлый из-за композита поверх белого. #history_block ВСЕГДА раскрывается, для visible canvas обрезается с учётом scrollTop. В onclone: multi-find-элементы разбиваются на слова в <span inline-block>, color()/oklch()/etc санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -25,6 +25,12 @@
     // Цвет бейджа часов (по запросу пользователя)
     const CLOCK_BG = 'rgb(184, 170, 170)';
     const CLOCK_TEXT = '#000000';
+
+    // Цвет подложки td#history (как он выглядит в игре — непрозрачный).
+    // В CSS игры фон задан как rgba(...,0.7), html2canvas рендерит его поверх
+    // белого и получает светлый rgb(172,158,162). Подменяем на непрозрачный
+    // rgb(107,86,88), чтобы было как в игре.
+    const TARGET_BG_COLOR = 'rgb(107, 86, 88)';
 
     // =========================================================================
     //  Время по МСК (UTC+3)
@@ -106,7 +112,8 @@
 
         const span = document.createElement('span');
         span.id = CLOCK_STAMP_ID;
-        span.textContent = `${timeStr} ${dateStr} MSK`;
+        // 🌍 + U+FE0E (variation selector) — монохромная иконка глобуса, как в UwU
+        span.textContent = `\u{1F30D}\u{FE0E} ${timeStr} ${dateStr} MSK`;
         span.style.cssText = [
             'margin-left: 10px',
             'padding: 2px 10px',
@@ -242,6 +249,12 @@
         });
 
         console.info('[CatWar Screenshot] sanitizeClone: заменено ' + replacedCount + ' multi-find элементов');
+
+        // --- 1b. Подменяем фон td#history на непрозрачный rgb(107,86,88) ---
+        // В CSS игры фон задан как rgba(...,0.7), html2canvas рендерит поверх
+        // белого и получает светлый rgb(172,158,162). Подменяем на непрозрачный
+        // тёмный, как в игре.
+        rootEl.style.setProperty('background-color', TARGET_BG_COLOR, 'important');
 
         // --- 2. Санирование color-функций ---
         if (!win) return;
