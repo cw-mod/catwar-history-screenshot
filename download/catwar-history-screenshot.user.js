@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      10.7
+// @version      10.8
 // @description  Кнопки «📸 Вся история» и «👁 Видимое» в блоке «История» на Игровой CatWar. Скриншотится весь td#history. Перед снимком: кнопки 📲/👁 временно прячутся. Бейдж часов рисуется прямо на canvas через ctx.fillText ПОСЛЕ захвата (html2canvas не умеет двухуровневый layout): «03:55:04 31.10.26» слева, 🌍 над MSK (как дробь, MSK меньше) справа, rgb(184,170,170), без рамки. Фон td#history подменяется на rgb(107,86,88). #history_block ВСЕГДА раскрывается, visible обрезается с учётом scrollTop. В onclone: multi-find разбивается на слова, color-функции санируются.
 // @author       z.ai
 // @match        https://catwar.su/cw3/*
@@ -148,16 +148,16 @@
         const boxW = boxPad + mainW + gap + rightColW + boxPad;
         const boxH = boxPad + contentH + boxPad;
 
-        // Бейдж на всю ширину подложки td#history: от левого до правого края
-        // canvas (с небольшим отступом). Вертикально — по центру h2.
-        const sideMargin = 4 * scale;
-        let boxX = sideMargin;
-        let boxW_full = ctx.canvas.width - sideMargin * 2;
-        let boxY;
+        // Бейдж рядом с текстом «История» — справа от <a> внутри h2.
+        // Вертикально — по центру h2.
+        let boxX, boxY;
         if (h2Rect) {
+            const h2RightOnCanvas = (h2Rect.right - targetRect.left) * scale;
             const h2CenterYOnCanvas = ((h2Rect.top + h2Rect.bottom) / 2 - targetRect.top) * scale;
+            boxX = h2RightOnCanvas + 8 * scale;
             boxY = h2CenterYOnCanvas - boxH / 2;
         } else {
+            boxX = ctx.canvas.width - boxW - 10 * scale;
             boxY = 10 * scale;
         }
 
@@ -166,7 +166,7 @@
             canvasH: ctx.canvas.height,
             boxX: boxX,
             boxY: boxY,
-            boxW: boxW_full,
+            boxW: boxW,
             boxH: boxH,
             mainW: mainW,
             iconW: iconW,
@@ -176,14 +176,14 @@
         });
 
         // Заливка фона со скруглёнными углами
-        const r = Math.min(10 * scale, boxW_full / 2, boxH / 2);
+        const r = Math.min(10 * scale, boxW / 2, boxH / 2);
         ctx.fillStyle = CLOCK_BG;
         ctx.beginPath();
         ctx.moveTo(boxX + r, boxY);
-        ctx.lineTo(boxX + boxW_full - r, boxY);
-        ctx.quadraticCurveTo(boxX + boxW_full, boxY, boxX + boxW_full, boxY + r);
-        ctx.lineTo(boxX + boxW_full, boxY + boxH - r);
-        ctx.quadraticCurveTo(boxX + boxW_full, boxY + boxH, boxX + boxW_full - r, boxY + boxH);
+        ctx.lineTo(boxX + boxW - r, boxY);
+        ctx.quadraticCurveTo(boxX + boxW, boxY, boxX + boxW, boxY + r);
+        ctx.lineTo(boxX + boxW, boxY + boxH - r);
+        ctx.quadraticCurveTo(boxX + boxW, boxY + boxH, boxX + boxW - r, boxY + boxH);
         ctx.lineTo(boxX + r, boxY + boxH);
         ctx.quadraticCurveTo(boxX, boxY + boxH, boxX, boxY + boxH - r);
         ctx.lineTo(boxX, boxY + r);
@@ -203,8 +203,8 @@
         ctx.font = `${mainFont}px Arial`;
         ctx.fillText(mainText, boxX + boxPad, contentCenterY);
 
-        // Правая колонка: 🌍 сверху, MSK снизу (прижата к правому краю бейджа)
-        const rightColX = boxX + boxW_full - boxPad - rightColW;
+        // Правая колонка: 🌍 сверху, MSK снизу (справа бейджа)
+        const rightColX = boxX + boxPad + mainW + gap;
         const rightColCenterX = rightColX + rightColW / 2;
         const rightColTop = contentTop + (contentH - rightColH) / 2;
 
