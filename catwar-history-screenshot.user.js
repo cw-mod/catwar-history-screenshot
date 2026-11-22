@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.1.3
-// @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.2: фикс зависания File System Access API (requestPermission без user gesture). v1.1.0: html2canvas-pro, таймаут 30с.
+// @version      1.1.4
+// @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.4: автосохранение в папку возвращено — getDirHandle вызывается ДО рендера (пока user gesture активен).
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -260,15 +260,20 @@ function idbSet(key, value) {
 }
 
 async function getDirHandle() {
-  // v1.1.2: queryPermission НЕ требует user gesture — только проверяет.
-  // requestPermission требует user gesture — после рендера (1+ сек) gesture
-  // уже истёк, и Chrome молча не вызывает callback. Поэтому если права не
-  // granted — сразу возвращаем null, fallback на обычный download.
+  // v1.1.4: ВЫЗЫВАТЬ ДО рендера, пока user gesture активен!
+  // requestPermission и showDirectoryPicker требуют gesture.
+  // Если вызвать после html2canvas (1+ сек) — gesture истечёт.
   if (_dirHandle) {
     try {
       const perm = await _dirHandle.queryPermission({ mode: 'readwrite' });
       if (perm === 'granted') return _dirHandle;
-      console.log('[CatWar Screenshot] File System Access: права истекли (' + perm + ') — fallback на download');
+      // v1.1.4: gesture ещё активен — можно requestPermission
+      if (perm === 'prompt') {
+        console.log('[CatWar Screenshot] File System Access: запрашиваю права (gesture активен)...');
+        const req = await _dirHandle.requestPermission({ mode: 'readwrite' });
+        if (req === 'granted') return _dirHandle;
+        console.log('[CatWar Screenshot] File System Access: права не даны (' + req + ')');
+      }
     } catch (e) { console.warn('[CatWar Screenshot] queryPermission:', e); }
     _dirHandle = null;
   }
@@ -277,18 +282,37 @@ async function getDirHandle() {
     try {
       const perm = await saved.queryPermission({ mode: 'readwrite' });
       if (perm === 'granted') { _dirHandle = saved; return saved; }
-      console.log('[CatWar Screenshot] File System Access: права на сохранённую папку истекли (' + perm + ') — fallback на download');
+      if (perm === 'prompt') {
+        console.log('[CatWar Screenshot] File System Access: запрашиваю права на сохранённую папку...');
+        const req = await saved.requestPermission({ mode: 'readwrite' });
+        if (req === 'granted') { _dirHandle = saved; return saved; }
+        console.log('[CatWar Screenshot] File System Access: права не даны (' + req + ')');
+      }
     } catch (e) { console.warn('[CatWar Screenshot] queryPermission saved:', e); }
   }
-  // showDirectoryPicker требует user gesture — не вызываем его из async callback.
-  // Пользователь должен кликнуть на кнопку в первый раз, когда gesture есть.
-  // Но даже в этом случае html2canvas (1+ сек) съедает gesture.
-  // Поэтому просто fallback на обычный download.
-  return null;
+  // v1.1.4: showDirectoryPicker тоже требует gesture — вызываем здесь,
+  // потому что getDirHandle теперь вызывается ДО рендера.
+  if (!window.showDirectoryPicker) {
+    console.log('[CatWar Screenshot] File System Access API не поддерживается — fallback на download');
+    return null;
+  }
+  try {
+    console.log('[CatWar Screenshot] File System Access: показываю диалог выбора папки...');
+    const handle = await window.showDirectoryPicker();
+    await idbSet('dir', handle);
+    _dirHandle = handle;
+    console.log('[CatWar Screenshot] File System Access: папка выбрана и сохранена');
+    return handle;
+  } catch (e) {
+    console.log('[CatWar Screenshot] File System Access: выбор папки отменён (' + (e && e.name ? e.name : e) + ')');
+    return null;
+  }
 }
 
-async function saveBlobToDir(blob, filename) {
-  const dir = await getDirHandle();
+async function saveBlobToDir(blob, filename, dirHandle) {
+  // v1.1.4: dirHandle передаётся снаружи (получен ДО рендера).
+  // Если null — fallback на обычный download.
+  const dir = dirHandle;
   if (!dir) return false;
   console.log('[CatWar Screenshot] File System Access: dir handle OK, открываю файл', filename);
   let fh;
@@ -322,7 +346,8 @@ async function saveBlobToDir(blob, filename) {
 
 // ===== Сохранение =====
 
-function downloadCanvas(canvas, modeSlug, onDone, onFail) {
+function downloadCanvas(canvas, modeSlug, onDone, onFail, dirHandle) {
+  // v1.1.4: dirHandle передаётся снаружи (получен ДО рендера в takeScreenshot).
   const msk = getMoscowDate();
   const stamp = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${msk.getFullYear()}_${pad(msk.getHours())}-${pad(msk.getMinutes())}-${pad(msk.getSeconds())}`;
   const filename = `история_${modeSlug}_${stamp}_МСК.png`;
@@ -336,7 +361,7 @@ function downloadCanvas(canvas, modeSlug, onDone, onFail) {
         // v1.1.3: таймаут 5 сек на saveBlobToDir. Если File System Access API
         // зависает на getFileHandle/createWritable/write/close — прерываем
         // и fallback на обычный download.
-        const savePromise = saveBlobToDir(blob, filename);
+        const savePromise = saveBlobToDir(blob, filename, dirHandle);
         const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('__timeout__'), 5000));
         const result = await Promise.race([savePromise, timeoutPromise]);
         if (result === '__timeout__') {
@@ -376,7 +401,7 @@ function takeScreenshot(btn, mode) {
     return;
   }
 
-  console.log('[CatWar Screenshot] v1.1.0 — старт:', mode, 'target=', target);
+  console.log('[CatWar Screenshot] v1.1.4 — старт:', mode, 'target=', target);
   const startTime = Date.now();
 
   const originalLabel = btn.textContent;
@@ -384,6 +409,18 @@ function takeScreenshot(btn, mode) {
   btn.disabled = true;
   btn.textContent = '⏳ Делаю скриншот…';
   isCapturing = true;
+
+  // v1.1.4: получаем dir handle ДО рендера, пока user gesture активен.
+  // showDirectoryPicker и requestPermission требуют gesture.
+  // Если вызвать после html2canvas (1+ сек) — gesture истечёт.
+  let preDirHandle = null;
+  getDirHandle().then(function (handle) {
+    preDirHandle = handle;
+    if (handle) console.log('[CatWar Screenshot] File System Access: dir handle получен ДО рендера');
+    else console.log('[CatWar Screenshot] File System Access: dir handle null — будет fallback на download');
+  }).catch(function (e) {
+    console.warn('[CatWar Screenshot] getDirHandle до рендера:', e);
+  }).then(function () {
 
   const scale = Math.min(window.devicePixelRatio || 1.5, 2);
   const group = document.getElementById(GROUP_ID) || document.getElementById(GROUP_ID_FLAT);
@@ -481,7 +518,7 @@ function takeScreenshot(btn, mode) {
     isCapturing = false;
   }
 
-  function finalize(rawCanvas) {
+  function finalize(rawCanvas, dirHandle) {
     cleanup();
     let finalCanvas = rawCanvas;
     if (mode === 'visible') {
@@ -600,13 +637,14 @@ function takeScreenshot(btn, mode) {
     }
     clearTimeout(timeoutId);
     console.log('[CatWar Screenshot] рендер завершён за', (Date.now() - startTime) + 'мс, canvas=', canvas.width + 'x' + canvas.height);
-    finalize(canvas);
+    finalize(canvas, preDirHandle);
   }).catch(function (err) {
     if (timedOut) return;
     clearTimeout(timeoutId);
     console.error('[CatWar Screenshot] html2canvas-pro упал:', err);
     fail(err);
   });
+  }); // закрытие .then(function() { для getDirHandle
 }
 
 // ===== Создание UI =====
