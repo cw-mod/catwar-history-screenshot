@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.1.1
-// @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.1: willReadFrequently для canvas (убирает предупреждение браузера). v1.1.0: html2canvas-pro (поддержка oklch/color()), таймаут 30с.
+// @version      1.1.2
+// @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.2: фикс зависания File System Access API (requestPermission без user gesture). v1.1.0: html2canvas-pro, таймаут 30с.
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -260,24 +260,31 @@ function idbSet(key, value) {
 }
 
 async function getDirHandle() {
+  // v1.1.2: queryPermission НЕ требует user gesture — только проверяет.
+  // requestPermission требует user gesture — после рендера (1+ сек) gesture
+  // уже истёк, и Chrome молча не вызывает callback. Поэтому если права не
+  // granted — сразу возвращаем null, fallback на обычный download.
   if (_dirHandle) {
-    const perm = await _dirHandle.queryPermission({ mode: 'readwrite' });
-    if (perm === 'granted') return _dirHandle;
-    const req = await _dirHandle.requestPermission({ mode: 'readwrite' });
-    if (req === 'granted') return _dirHandle;
+    try {
+      const perm = await _dirHandle.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted') return _dirHandle;
+      console.log('[CatWar Screenshot] File System Access: права истекли (' + perm + ') — fallback на download');
+    } catch (e) { console.warn('[CatWar Screenshot] queryPermission:', e); }
+    _dirHandle = null;
   }
   const saved = await idbGet('dir');
   if (saved) {
-    const perm = await saved.queryPermission({ mode: 'readwrite' });
-    if (perm === 'granted') { _dirHandle = saved; return saved; }
-    const req = await saved.requestPermission({ mode: 'readwrite' });
-    if (req === 'granted') { _dirHandle = saved; return saved; }
+    try {
+      const perm = await saved.queryPermission({ mode: 'readwrite' });
+      if (perm === 'granted') { _dirHandle = saved; return saved; }
+      console.log('[CatWar Screenshot] File System Access: права на сохранённую папку истекли (' + perm + ') — fallback на download');
+    } catch (e) { console.warn('[CatWar Screenshot] queryPermission saved:', e); }
   }
-  if (!window.showDirectoryPicker) return null;
-  const handle = await window.showDirectoryPicker();
-  await idbSet('dir', handle);
-  _dirHandle = handle;
-  return handle;
+  // showDirectoryPicker требует user gesture — не вызываем его из async callback.
+  // Пользователь должен кликнуть на кнопку в первый раз, когда gesture есть.
+  // Но даже в этом случае html2canvas (1+ сек) съедает gesture.
+  // Поэтому просто fallback на обычный download.
+  return null;
 }
 
 async function saveBlobToDir(blob, filename) {
@@ -296,20 +303,29 @@ function downloadCanvas(canvas, modeSlug, onDone, onFail) {
   const msk = getMoscowDate();
   const stamp = `${pad(msk.getDate())}.${pad(msk.getMonth() + 1)}.${msk.getFullYear()}_${pad(msk.getHours())}-${pad(msk.getMinutes())}-${pad(msk.getSeconds())}`;
   const filename = `история_${modeSlug}_${stamp}_МСК.png`;
-  canvas.toBlob(async function (blob) {
-    if (!blob) { onFail('Не удалось собрать PNG.'); return; }
-    try {
-      const saved = await saveBlobToDir(blob, filename);
-      if (saved) { onDone(filename); return; }
-    } catch (e) {}
-    // Fallback на обычный download, если File System Access API недоступен.
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-    onDone(filename);
-  }, 'image/png');
+  console.log('[CatWar Screenshot] downloadCanvas: toBlob для', filename);
+  try {
+    canvas.toBlob(async function (blob) {
+      if (!blob) { onFail('Не удалось собрать PNG (blob null).'); return; }
+      console.log('[CatWar Screenshot] blob создан:', blob.size, 'байт');
+      let saved = false;
+      try {
+        saved = await saveBlobToDir(blob, filename);
+        if (saved) { console.log('[CatWar Screenshot] сохранён через File System Access API'); onDone(filename); return; }
+      } catch (e) { console.warn('[CatWar Screenshot] saveBlobToDir:', e); }
+      // Fallback на обычный download
+      console.log('[CatWar Screenshot] fallback на обычный download');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      onDone(filename);
+    }, 'image/png');
+  } catch (e) {
+    console.error('[CatWar Screenshot] toBlob упал:', e);
+    onFail('canvas.toBlob: ' + (e && e.message ? e.message : e));
+  }
 }
 
 // ===== Главный обработчик =====
