@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.1.6
+// @version      1.1.7
 // @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.4: автосохранение в папку возвращено — getDirHandle вызывается ДО рендера (пока user gesture активен).
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -612,7 +612,8 @@ function takeScreenshot(btn, mode) {
         alert(errMsg);
         btn.textContent = originalLabel;
         btn.disabled = originalDisabled;
-      }
+      },
+      dirHandle  // v1.1.7: передаём dirHandle в downloadCanvas
     );
   }
 
