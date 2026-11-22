@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.1.4
+// @version      1.1.5
 // @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.4: автосохранение в папку возвращено — getDirHandle вызывается ДО рендера (пока user gesture активен).
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -260,20 +260,16 @@ function idbSet(key, value) {
 }
 
 async function getDirHandle() {
-  // v1.1.4: ВЫЗЫВАТЬ ДО рендера, пока user gesture активен!
-  // requestPermission и showDirectoryPicker требуют gesture.
-  // Если вызвать после html2canvas (1+ сек) — gesture истечёт.
+  // v1.1.5: ТОЛЬКО queryPermission — не вызывает диалоги.
+  // requestPermission и showDirectoryPicker могут зависнуть в async context
+  // даже если gesture технически активен. Поэтому тут только проверка.
+  // Выбор папки — через отдельную кнопку 📁 (pickFolder), которая вызывает
+  // showDirectoryPicker синхронно из click handler.
   if (_dirHandle) {
     try {
       const perm = await _dirHandle.queryPermission({ mode: 'readwrite' });
       if (perm === 'granted') return _dirHandle;
-      // v1.1.4: gesture ещё активен — можно requestPermission
-      if (perm === 'prompt') {
-        console.log('[CatWar Screenshot] File System Access: запрашиваю права (gesture активен)...');
-        const req = await _dirHandle.requestPermission({ mode: 'readwrite' });
-        if (req === 'granted') return _dirHandle;
-        console.log('[CatWar Screenshot] File System Access: права не даны (' + req + ')');
-      }
+      console.log('[CatWar Screenshot] File System Access: права не granted (' + perm + ') — нажмите 📁 чтобы выбрать папку');
     } catch (e) { console.warn('[CatWar Screenshot] queryPermission:', e); }
     _dirHandle = null;
   }
@@ -282,19 +278,18 @@ async function getDirHandle() {
     try {
       const perm = await saved.queryPermission({ mode: 'readwrite' });
       if (perm === 'granted') { _dirHandle = saved; return saved; }
-      if (perm === 'prompt') {
-        console.log('[CatWar Screenshot] File System Access: запрашиваю права на сохранённую папку...');
-        const req = await saved.requestPermission({ mode: 'readwrite' });
-        if (req === 'granted') { _dirHandle = saved; return saved; }
-        console.log('[CatWar Screenshot] File System Access: права не даны (' + req + ')');
-      }
+      console.log('[CatWar Screenshot] File System Access: права на сохранённую папку не granted (' + perm + ') — нажмите 📁 чтобы выбрать папку');
     } catch (e) { console.warn('[CatWar Screenshot] queryPermission saved:', e); }
   }
-  // v1.1.4: showDirectoryPicker тоже требует gesture — вызываем здесь,
-  // потому что getDirHandle теперь вызывается ДО рендера.
+  return null;
+}
+
+// v1.1.5: отдельная функция для выбора папки.
+// Вызывается ТОЛЬКО из click handler кнопки 📁 — gesture гарантированно активен.
+async function pickFolder() {
   if (!window.showDirectoryPicker) {
-    console.log('[CatWar Screenshot] File System Access API не поддерживается — fallback на download');
-    return null;
+    alert('File System Access API не поддерживается.\nИспользуйте Chrome или Edge.');
+    return;
   }
   try {
     console.log('[CatWar Screenshot] File System Access: показываю диалог выбора папки...');
@@ -302,10 +297,14 @@ async function getDirHandle() {
     await idbSet('dir', handle);
     _dirHandle = handle;
     console.log('[CatWar Screenshot] File System Access: папка выбрана и сохранена');
-    return handle;
+    alert('Папка выбрана! Теперь скриншоты будут сохраняться туда автоматически.');
   } catch (e) {
-    console.log('[CatWar Screenshot] File System Access: выбор папки отменён (' + (e && e.name ? e.name : e) + ')');
-    return null;
+    if (e && e.name === 'AbortError') {
+      console.log('[CatWar Screenshot] File System Access: выбор папки отменён');
+    } else {
+      console.warn('[CatWar Screenshot] showDirectoryPicker:', e);
+      alert('Не удалось выбрать папку: ' + (e && e.message ? e.message : e));
+    }
   }
 }
 
@@ -659,7 +658,11 @@ function buildGroup() {
   const btnVisible = document.createElement('button');
   btnVisible.type = 'button'; btnVisible.textContent = '👁'; btnVisible.title = 'Скриншот видимой части.';
   styleButton(btnVisible, 'secondary'); btnVisible.addEventListener('click', () => takeScreenshot(btnVisible, 'visible'));
-  group.appendChild(btnFull); group.appendChild(btnVisible);
+  // v1.1.5: кнопка выбора папки для автосохранения
+  const btnFolder = document.createElement('button');
+  btnFolder.type = 'button'; btnFolder.textContent = '📁'; btnFolder.title = 'Выбрать папку для автосохранения скриншотов.';
+  styleButton(btnFolder, 'secondary'); btnFolder.addEventListener('click', () => pickFolder());
+  group.appendChild(btnFull); group.appendChild(btnVisible); group.appendChild(btnFolder);
   return group;
 }
 
