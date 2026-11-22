@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.1.0
-// @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.0: html2canvas-pro (поддержка oklch/color()), таймаут 30с, подробное логирование.
+// @version      1.1.1
+// @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.1: willReadFrequently для canvas (убирает предупреждение браузера). v1.1.0: html2canvas-pro (поддержка oklch/color()), таймаут 30с.
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
@@ -444,7 +444,7 @@ function takeScreenshot(btn, mode) {
         const newCanvas = document.createElement('canvas');
         newCanvas.width = rawCanvas.width;
         newCanvas.height = Math.round(cropH * s);
-        const ctx = newCanvas.getContext('2d');
+        const ctx = newCanvas.getContext('2d', { willReadFrequently: true });
         ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, newCanvas.width, newCanvas.height);
         if (upperEnd > 0) ctx.drawImage(rawCanvas, 0, 0, rawCanvas.width, upperEnd, 0, 0, rawCanvas.width, upperEnd);
         if (histSrcH > 0) ctx.drawImage(rawCanvas, 0, histSrcY, rawCanvas.width, histSrcH, 0, upperEnd, rawCanvas.width, histSrcH);
@@ -465,7 +465,7 @@ function takeScreenshot(btn, mode) {
             const trimmed = document.createElement('canvas');
             trimmed.width = newCanvas.width;
             trimmed.height = lastY + 2;
-            const tctx = trimmed.getContext('2d');
+            const tctx = trimmed.getContext('2d', { willReadFrequently: true });
             tctx.drawImage(newCanvas, 0, 0);
             finalCanvas = trimmed;
           } else {
@@ -481,7 +481,7 @@ function takeScreenshot(btn, mode) {
         const copyCanvas = document.createElement('canvas');
         copyCanvas.width = rawCanvas.width;
         copyCanvas.height = rawCanvas.height;
-        const copyCtx = copyCanvas.getContext('2d');
+        const copyCtx = copyCanvas.getContext('2d', { willReadFrequently: true });
         copyCtx.drawImage(rawCanvas, 0, 0);
         finalCanvas = copyCanvas;
       } catch (e) {
@@ -491,7 +491,7 @@ function takeScreenshot(btn, mode) {
     }
 
     // Рисуем штамп МСК на финальном canvas.
-    const finalCtx = finalCanvas.getContext('2d');
+    const finalCtx = finalCanvas.getContext('2d', { willReadFrequently: true });
     if (!finalCtx) {
       console.error('[CatWar Screenshot] Не удалось получить 2d context для штампа МСК');
     } else {
