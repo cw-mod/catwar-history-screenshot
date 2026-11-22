@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.1.5
+// @version      1.1.6
 // @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.4: автосохранение в папку возвращено — getDirHandle вызывается ДО рендера (пока user gesture активен).
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -260,16 +260,19 @@ function idbSet(key, value) {
 }
 
 async function getDirHandle() {
-  // v1.1.5: ТОЛЬКО queryPermission — не вызывает диалоги.
-  // requestPermission и showDirectoryPicker могут зависнуть в async context
-  // даже если gesture технически активен. Поэтому тут только проверка.
-  // Выбор папки — через отдельную кнопку 📁 (pickFolder), которая вызывает
-  // showDirectoryPicker синхронно из click handler.
+  // v1.1.6: queryPermission + requestPermission (если prompt).
+  // requestPermission НЕ зависает — возвращает 'denied' если gesture истёк.
+  // Gesture активен потому что getDirHandle вызывается ДО рендера из click handler.
   if (_dirHandle) {
     try {
       const perm = await _dirHandle.queryPermission({ mode: 'readwrite' });
       if (perm === 'granted') return _dirHandle;
-      console.log('[CatWar Screenshot] File System Access: права не granted (' + perm + ') — нажмите 📁 чтобы выбрать папку');
+      if (perm === 'prompt') {
+        console.log('[CatWar Screenshot] File System Access: запрашиваю права...');
+        const req = await _dirHandle.requestPermission({ mode: 'readwrite' });
+        if (req === 'granted') return _dirHandle;
+        console.log('[CatWar Screenshot] File System Access: права не даны (' + req + ') — fallback на download');
+      }
     } catch (e) { console.warn('[CatWar Screenshot] queryPermission:', e); }
     _dirHandle = null;
   }
@@ -278,7 +281,12 @@ async function getDirHandle() {
     try {
       const perm = await saved.queryPermission({ mode: 'readwrite' });
       if (perm === 'granted') { _dirHandle = saved; return saved; }
-      console.log('[CatWar Screenshot] File System Access: права на сохранённую папку не granted (' + perm + ') — нажмите 📁 чтобы выбрать папку');
+      if (perm === 'prompt') {
+        console.log('[CatWar Screenshot] File System Access: запрашиваю права на сохранённую папку...');
+        const req = await saved.requestPermission({ mode: 'readwrite' });
+        if (req === 'granted') { _dirHandle = saved; return saved; }
+        console.log('[CatWar Screenshot] File System Access: права не даны (' + req + ') — fallback на download');
+      }
     } catch (e) { console.warn('[CatWar Screenshot] queryPermission saved:', e); }
   }
   return null;
@@ -294,9 +302,15 @@ async function pickFolder() {
   try {
     console.log('[CatWar Screenshot] File System Access: показываю диалог выбора папки...');
     const handle = await window.showDirectoryPicker();
+    // v1.1.6: сразу запрашиваем права — gesture ещё активен
+    const perm = await handle.requestPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+      alert('Права на папку не получены (' + perm + '). Скриншоты будут сохраняться через обычный download.');
+      return;
+    }
     await idbSet('dir', handle);
     _dirHandle = handle;
-    console.log('[CatWar Screenshot] File System Access: папка выбрана и сохранена');
+    console.log('[CatWar Screenshot] File System Access: папка выбрана, права granted, сохранена в IndexedDB');
     alert('Папка выбрана! Теперь скриншоты будут сохраняться туда автоматически.');
   } catch (e) {
     if (e && e.name === 'AbortError') {
