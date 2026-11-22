@@ -1,15 +1,17 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.0.0
-// @description  Скриншот истории CatWar с бейджем времени по МСК
+// @version      1.1.0
+// @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.0: html2canvas-pro (поддержка oklch/color()), таймаут 30с, подробное логирование.
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
 // @match        https://catwar.su/cw3
 // @match        https://catwar.su/
+// @match        https://*.catwar.su/cw3/*
+// @match        https://*.catwar.su/cw3
 // @match        http://catwar.su/cw3/*
 // @match        http://catwar.su/
-// @require      https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
+// @require      https://cdn.jsdelivr.net/npm/html2canvas-pro@1.5.8/dist/html2canvas-pro.min.js
 // @grant        none
 // @run-at       document-idle
 // @noframes
@@ -316,7 +318,17 @@ function takeScreenshot(btn, mode) {
   if (isCapturing) return;
   const target = document.querySelector('td#history') || document.querySelector('#history');
   if (!target) { alert('Блок «История» не найден.'); return; }
-  if (typeof window.html2canvas !== 'function') { alert('html2canvas не загружен.'); return; }
+  // v1.1.0: поддерживаем и html2canvas-pro (экспортирует и html2canvas, и html2canvasPro)
+  // и оригинальный html2canvas.
+  const render = window.html2canvasPro || window.html2canvas;
+  if (typeof render !== 'function') {
+    alert('html2canvas-pro не загружен. Проверьте подключение к CDN: ' +
+          'jsdelivr.net может быть заблокирован вашим провайдером.');
+    return;
+  }
+
+  console.log('[CatWar Screenshot] v1.1.0 — старт:', mode, 'target=', target);
+  const startTime = Date.now();
 
   const originalLabel = btn.textContent;
   const originalDisabled = btn.disabled;
@@ -512,7 +524,40 @@ function takeScreenshot(btn, mode) {
     btn.disabled = originalDisabled;
   }
 
-  window.html2canvas(target, baseOptions).then(finalize).catch(fail);
+  // v1.1.0: таймаут 30 сек. Если html2canvas-pro завис (oklch/color() в
+  // сложных CSS — известная причина) — разблокируем кнопку и покажем alert.
+  let timedOut = false;
+  const timeoutMs = 30000;
+  const timeoutId = setTimeout(function () {
+    timedOut = true;
+    console.error('[CatWar Screenshot] Таймаут ' + (timeoutMs / 1000) + 'с — html2canvas-pro завис. Возможно из-за сложных CSS color functions. Разблокирую кнопку.');
+    cleanup();
+    btn.textContent = originalLabel;
+    btn.disabled = originalDisabled;
+    alert('Скриншот завис через ' + (timeoutMs / 1000) + ' секунд.\n\n' +
+          'Возможные причины:\n' +
+          '• CatWar UwU или другой userscript использует oklch()/color() в CSS, ' +
+          'которые html2canvas-pro не осилил.\n' +
+          '• На странице тяжёлый DOM (много картинок с cross-origin).\n\n' +
+          'Попробуйте обновить страницу и повторить. Если не помогает — ' +
+          'откройте консоль (F12) и пришлите ошибки с тегом [CatWar Screenshot].');
+  }, timeoutMs);
+
+  console.log('[CatWar Screenshot] вызываю html2canvas-pro, target=', target.offsetWidth + 'x' + target.offsetHeight);
+  render(target, baseOptions).then(function (canvas) {
+    if (timedOut) {
+      console.warn('[CatWar Screenshot] html2canvas-pro завершился после таймаута — игнорирую');
+      return;
+    }
+    clearTimeout(timeoutId);
+    console.log('[CatWar Screenshot] рендер завершён за', (Date.now() - startTime) + 'мс, canvas=', canvas.width + 'x' + canvas.height);
+    finalize(canvas);
+  }).catch(function (err) {
+    if (timedOut) return;
+    clearTimeout(timeoutId);
+    console.error('[CatWar Screenshot] html2canvas-pro упал:', err);
+    fail(err);
+  });
 }
 
 // ===== Создание UI =====
