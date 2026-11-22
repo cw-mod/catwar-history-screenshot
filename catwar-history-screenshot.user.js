@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CatWar — Скриншот истории
 // @namespace    catwar-history-screenshot
-// @version      1.1.2
+// @version      1.1.3
 // @description  Скриншот истории CatWar с бейджем времени по МСК. v1.1.2: фикс зависания File System Access API (requestPermission без user gesture). v1.1.0: html2canvas-pro, таймаут 30с.
 // @author       кошечка
 // @match        https://catwar.su/cw3/*
@@ -290,11 +290,34 @@ async function getDirHandle() {
 async function saveBlobToDir(blob, filename) {
   const dir = await getDirHandle();
   if (!dir) return false;
-  const fh = await dir.getFileHandle(filename, { create: true });
-  const writable = await fh.createWritable();
-  await writable.write(blob);
-  await writable.close();
-  return true;
+  console.log('[CatWar Screenshot] File System Access: dir handle OK, открываю файл', filename);
+  let fh;
+  try {
+    fh = await dir.getFileHandle(filename, { create: true });
+    console.log('[CatWar Screenshot] File System Access: file handle OK');
+  } catch (e) {
+    console.warn('[CatWar Screenshot] getFileHandle упал:', e);
+    return false;
+  }
+  let writable;
+  try {
+    writable = await fh.createWritable();
+    console.log('[CatWar Screenshot] File System Access: writable OK');
+  } catch (e) {
+    console.warn('[CatWar Screenshot] createWritable упал:', e);
+    return false;
+  }
+  try {
+    await writable.write(blob);
+    console.log('[CatWar Screenshot] File System Access: write OK');
+    await writable.close();
+    console.log('[CatWar Screenshot] File System Access: close OK');
+    return true;
+  } catch (e) {
+    console.warn('[CatWar Screenshot] write/close упал:', e);
+    try { await writable.close(); } catch (e2) {}
+    return false;
+  }
 }
 
 // ===== Сохранение =====
@@ -310,8 +333,18 @@ function downloadCanvas(canvas, modeSlug, onDone, onFail) {
       console.log('[CatWar Screenshot] blob создан:', blob.size, 'байт');
       let saved = false;
       try {
-        saved = await saveBlobToDir(blob, filename);
-        if (saved) { console.log('[CatWar Screenshot] сохранён через File System Access API'); onDone(filename); return; }
+        // v1.1.3: таймаут 5 сек на saveBlobToDir. Если File System Access API
+        // зависает на getFileHandle/createWritable/write/close — прерываем
+        // и fallback на обычный download.
+        const savePromise = saveBlobToDir(blob, filename);
+        const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('__timeout__'), 5000));
+        const result = await Promise.race([savePromise, timeoutPromise]);
+        if (result === '__timeout__') {
+          console.warn('[CatWar Screenshot] saveBlobToDir не завершился за 5с — fallback на download');
+        } else {
+          saved = result;
+          if (saved) { console.log('[CatWar Screenshot] сохранён через File System Access API'); onDone(filename); return; }
+        }
       } catch (e) { console.warn('[CatWar Screenshot] saveBlobToDir:', e); }
       // Fallback на обычный download
       console.log('[CatWar Screenshot] fallback на обычный download');
